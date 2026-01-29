@@ -1,0 +1,28 @@
+**/build/
+**/build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.sln
+*.vcxproj*
+*.user
+*.suo
+.vscode/
+.idea/
+
+# binaries
+*.exe
+*.dll
+*.lib
+*.pdb
+*.obj
+*.ilk
+
+# Qt generated
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+
+# OS
+Thumbs.db
+.DS_Store

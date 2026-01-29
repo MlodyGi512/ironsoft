@@ -1,0 +1,5 @@
+{
+  "heartbeat_period_ms": 1000,
+  "status_period_ms": 2000,
+  "cmd_timeout_ms": 3000
+}

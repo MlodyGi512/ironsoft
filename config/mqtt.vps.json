@@ -1,0 +1,18 @@
+{
+  "broker": {
+    "host": "mqtt.example.com",
+    "port": 8883
+  },
+  "auth": {
+    "username": "drone01",
+    "password": "CHANGE_ME"
+  },
+  "tls": {
+    "enabled": true,
+    "ca_file": "config/ca.pem"
+  },
+  "client": {
+    "drone_id": "drone01",
+    "keepalive_s": 30
+  }
+}

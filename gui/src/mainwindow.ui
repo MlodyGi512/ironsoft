@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="windowTitle">
+   <string>IronSoft GCS – MQTT MVP</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <item>
+     <widget class="QGroupBox" name="groupConnection">
+      <property name="title">
+       <string>Connection</string>
+      </property>
+      <layout class="QGridLayout" name="gridLayout">
+       <item row="0" column="0">
+        <widget class="QLabel" name="labelHost">
+         <property name="text"><string>Host</string></property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <widget class="QLineEdit" name="editHost"/>
+       </item>
+       <item row="0" column="2">
+        <widget class="QLabel" name="labelPort">
+         <property name="text"><string>Port</string></property>
+        </widget>
+       </item>
+       <item row="0" column="3">
+        <widget class="QSpinBox" name="spinPort">
+         <property name="minimum"><number>1</number></property>
+         <property name="maximum"><number>65535</number></property>
+         <property name="value"><number>1883</number></property>
+        </widget>
+       </item>
+
+       <item row="1" column="0">
+        <widget class="QLabel" name="labelUser">
+         <property name="text"><string>User</string></property>
+        </widget>
+       </item>
+       <item row="1" column="1">
+        <widget class="QLineEdit" name="editUser"/>
+       </item>
+       <item row="1" column="2">
+        <widget class="QLabel" name="labelPass">
+         <property name="text"><string>Password</string></property>
+        </widget>
+       </item>
+       <item row="1" column="3">
+        <widget class="QLineEdit" name="editPass">
+         <property name="echoMode"><enum>QLineEdit::Password</enum></property>
+        </widget>
+       </item>
+
+       <item row="2" column="0">
+        <widget class="QLabel" name="labelDroneId">
+         <property name="text"><string>Drone ID</string></property>
+        </widget>
+       </item>
+       <item row="2" column="1">
+        <widget class="QLineEdit" name="editDroneId"/>
+       </item>
+
+       <item row="2" column="2">
+        <widget class="QLabel" name="labelPresence">
+         <property name="text"><string>Presence</string></property>
+        </widget>
+       </item>
+       <item row="2" column="3">
+        <widget class="QLabel" name="led">
+         <property name="objectName"><string>led</string></property>
+        </widget>
+       </item>
+
+       <item row="3" column="0">
+        <widget class="QPushButton" name="btnConnect">
+         <property name="text"><string>Connect</string></property>
+        </widget>
+       </item>
+       <item row="3" column="1">
+        <widget class="QPushButton" name="btnDisconnect">
+         <property name="text"><string>Disconnect</string></property>
+        </widget>
+       </item>
+       <item row="3" column="2">
+        <widget class="QPushButton" name="btnPing">
+         <property name="text"><string>PING</string></property>
+        </widget>
+       </item>
+       <item row="3" column="3">
+        <widget class="QLabel" name="labelConnState">
+         <property name="text"><string>Disconnected</string></property>
+        </widget>
+       </item>
+
+      </layout>
+     </widget>
+    </item>
+
+    <item>
+     <widget class="QGroupBox" name="groupLog">
+      <property name="title"><string>Log</string></property>
+      <layout class="QVBoxLayout" name="verticalLayout_2">
+       <item>
+        <widget class="QTextEdit" name="textLog">
+         <property name="readOnly"><bool>true</bool></property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+
+   </layout>
+  </widget>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

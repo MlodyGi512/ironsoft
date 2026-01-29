@@ -1,0 +1,18 @@
+{
+  "broker": {
+    "host": "192.168.1.36",
+    "port": 1883
+  },
+  "auth": {
+    "username": "",
+    "password": ""
+  },
+  "tls": {
+    "enabled": false,
+    "ca_file": ""
+  },
+  "client": {
+    "drone_id": "drone01",
+    "keepalive_s": 30
+  }
+}
