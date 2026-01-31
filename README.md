@@ -57,19 +57,24 @@ cmake --build build
 
 ## Quick start – Windows 11 (GUI)
 
-### Requirement: Paho MQTT C++ (vcpkg) installed
-In the Qt Maintenance Tool, ensure **"Qt MQTT"** is installed for your Qt 6.10.1 MSVC 2022 kit.
+1. **Install dependencies**
+   - vcpkg (x64-windows triplet) with: `paho-mqttpp3`, `paho-mqtt`, `openssl`, `qtbase` (Qt 6.6+).
+   - Qt 6 MSVC kit (e.g. `C:\Qt\6.6.3\msvc2022_64`).
+2. **Configure + build (Release)**
+   ```powershell
+   cmake -S gui -B gui/build -G "Visual Studio 17 2022" -A x64 ^
+     -DCMAKE_TOOLCHAIN_FILE="C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake" ^
+     -DVCPKG_TARGET_TRIPLET=x64-windows ^
+     -DQt6_DIR="C:/Qt/6.6.3/msvc2022_64/lib/cmake/Qt6" ^
+     -DCMAKE_BUILD_TYPE=Release
+   cmake --build gui/build --config Release --target IronsoftGui
+   ```
+3. **Run** `gui\build\Release\IronsoftGui.exe`
 
-### Build (CMake + Visual Studio)
-```powershell
-cd gui
-rmdir /s /q build 2>$null
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DQt6_DIR="C:\Qt\6.10.1\msvc2022_64\lib\cmake\Qt6"
-cmake --build build --config Release
-```
-
-Run:
-- `gui\build\Release\IronsoftGui.exe`
+The GUI CMakeLists runs `windeployqt` and copies all dependent DLLs next to the EXE, so a clean Windows VM can launch it without editing `PATH`. The copied runtime set includes:
+   - Qt: `Qt6Core.dll`, `Qt6Gui.dll`, `Qt6Widgets.dll`, `Qt6Network.dll`, `Qt6Svg.dll` (if present) and the `platforms\qwindows.dll` plugin.
+   - Paho MQTT: `paho-mqttpp3.dll`, `paho-mqtt3as.dll`, `paho-mqtt3a.dll`.
+   - TLS deps (via vcpkg OpenSSL): `libssl-3-x64.dll`, `libcrypto-3-x64.dll`.
 
 ---
 
