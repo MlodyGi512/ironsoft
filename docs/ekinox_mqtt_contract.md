@@ -1,8 +1,12 @@
 # Ekinox MQTT Contract
 
-This document defines the MQTT topics and JSON payloads that connect the Ekinox sensor service, backend, and GUI. The topic root is `ironsoft/uav/<drone_id>/sensors/ekinox`.
+This document defines the MQTT topics and JSON payloads that connect the Ekinox sensor service, backend, and GUI. The topic root is `ironsoft/uav/<drone_id>/ekinox`.
 
 ## Topics
+- `.../presence`
+  - **Direction:** service ? broker ? GUI/backend
+  - **QoS:** 1 (retained)
+  - **Purpose:** broadcasts whether the service process is alive, plus optional reason for shutdowns.
 - `.../status`
   - **Direction:** service ? broker ? GUI/backend
   - **QoS:** 1
@@ -25,6 +29,18 @@ This document defines the MQTT topics and JSON payloads that connect the Ekinox 
   - **Purpose:** correlates responses to `cmd` via the `id` field.
 
 ## JSON Payloads
+### Presence (`.../presence`)
+```json
+{
+  "state": "online",
+  "ts": 0,
+  "reason": ""
+}
+```
+- `state`: either `"online"` or `"offline"`.
+- `ts`: Unix epoch seconds when the presence payload was emitted.
+- `reason`: optional human-readable explanation (e.g., `"shutdown"`).
+
 ### Status (`.../status`)
 ```json
 {
@@ -36,7 +52,7 @@ This document defines the MQTT topics and JSON payloads that connect the Ekinox 
   "last_error_ts": 0
 }
 ```
-- `state`: string value defined by `EkinoxState`, e.g. `"offline"`, `"ready"`, `"recording"`.
+- `state`: uppercase string defined by `ServiceState` (`DISCONNECTED`, `CONNECTING`, `IDLE`, `STARTING`, `RECORDING`, `STOPPING`, `ERROR`).
 - `link_alive`: `true` if the UDP transport still receives frames within its timeout.
 - `api_ok`: `true` when the Ekinox API responds without errors.
 - `recording_active`: `true` when the device is currently logging IMU data.
@@ -57,11 +73,11 @@ This document defines the MQTT topics and JSON payloads that connect the Ekinox 
 ```json
 {
   "id": "uuid-or-monotonic",
-  "type": "ping|start_recording|stop_recording"
+  "type": "ping|start_logger|stop_logger"
 }
 ```
 - `id`: caller-supplied identifier echoed by acknowledgments.
-- `type`: command verb. `ping` should yield an `ack` immediately; `start_recording` / `stop_recording` toggle Ekinox logging.
+- `type`: command verb. `ping` should yield an `ack` immediately; `start_logger` / `stop_logger` toggle Ekinox logging.
 
 ### Acknowledgment (`.../ack`)
 ```json
@@ -78,6 +94,6 @@ This document defines the MQTT topics and JSON payloads that connect the Ekinox 
 - `error`: human-readable failure reason (non-empty only when `ok == false`). Only one of `message` / `error` should be non-empty per payload.
 
 ## GUI Expectations
-- Treat `status.state` + `link_alive` as primary indicators: when either breaks, show the Ekinox widget as disconnected (red) and display `last_error`.
+- Treat `presence.state` + `status.state`/`link_alive` as primary indicators: when either breaks, show the Ekinox widget as disconnected (red) and display `last_error`.
 - Show `recording_active` as a dedicated indicator or toggle so operators know whether logging is running.
 - Surface `last_error` text verbatim near the sensor card and reset it when the service clears it (empty string). Keep the previous timestamp visible for troubleshooting.

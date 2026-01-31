@@ -1,109 +1,119 @@
 #pragma once
 
+#include <string>
 #include <string_view>
 
 namespace ironsoft::ekinox {
 
-enum class EkinoxState {
-	kUnknown = 0,
-	kOffline,
-	kInitializing,
-	kReady,
+enum class ServiceState {
+	kDisconnected = 0,
+	kConnecting,
+	kIdle,
+	kStarting,
 	kRecording,
+	kStopping,
 	kError
 };
 
-enum class EkinoxCommandType {
+enum class CommandType {
 	kPing = 0,
-	kStartRecording,
-	kStopRecording
+	kStartLogger,
+	kStopLogger,
+	kUnknown
 };
 
-inline constexpr std::string_view kStateUnknownStr{"unknown"};
-inline constexpr std::string_view kStateOfflineStr{"offline"};
-inline constexpr std::string_view kStateInitializingStr{"initializing"};
-inline constexpr std::string_view kStateReadyStr{"ready"};
-inline constexpr std::string_view kStateRecordingStr{"recording"};
-inline constexpr std::string_view kStateErrorStr{"error"};
+inline constexpr std::string_view kStateDisconnected{"DISCONNECTED"};
+inline constexpr std::string_view kStateConnecting{"CONNECTING"};
+inline constexpr std::string_view kStateIdle{"IDLE"};
+inline constexpr std::string_view kStateStarting{"STARTING"};
+inline constexpr std::string_view kStateRecording{"RECORDING"};
+inline constexpr std::string_view kStateStopping{"STOPPING"};
+inline constexpr std::string_view kStateError{"ERROR"};
 
-inline constexpr std::string_view kCmdPingStr{"ping"};
-inline constexpr std::string_view kCmdStartRecordingStr{"start_recording"};
-inline constexpr std::string_view kCmdStopRecordingStr{"stop_recording"};
+inline constexpr std::string_view kCmdPing{"ping"};
+inline constexpr std::string_view kCmdStartLogger{"start_logger"};
+inline constexpr std::string_view kCmdStopLogger{"stop_logger"};
 
-inline constexpr std::string_view to_string(EkinoxState state) noexcept {
+inline constexpr std::string_view to_string(ServiceState state) noexcept {
 	switch (state) {
-	case EkinoxState::kOffline:
-		return kStateOfflineStr;
-	case EkinoxState::kInitializing:
-		return kStateInitializingStr;
-	case EkinoxState::kReady:
-		return kStateReadyStr;
-	case EkinoxState::kRecording:
-		return kStateRecordingStr;
-	case EkinoxState::kError:
-		return kStateErrorStr;
-	case EkinoxState::kUnknown:
+	case ServiceState::kConnecting:
+		return kStateConnecting;
+	case ServiceState::kIdle:
+		return kStateIdle;
+	case ServiceState::kStarting:
+		return kStateStarting;
+	case ServiceState::kRecording:
+		return kStateRecording;
+	case ServiceState::kStopping:
+		return kStateStopping;
+	case ServiceState::kError:
+		return kStateError;
+	case ServiceState::kDisconnected:
 	default:
-		return kStateUnknownStr;
+		return kStateDisconnected;
 	}
 }
 
-inline constexpr bool try_parse_state(std::string_view text, EkinoxState& state) noexcept {
-	if (text == kStateOfflineStr) {
-		state = EkinoxState::kOffline;
+inline constexpr bool try_parse_state(std::string_view text, ServiceState& state) noexcept {
+	if (text == kStateDisconnected) {
+		state = ServiceState::kDisconnected;
 		return true;
 	}
-	if (text == kStateInitializingStr) {
-		state = EkinoxState::kInitializing;
+	if (text == kStateConnecting) {
+		state = ServiceState::kConnecting;
 		return true;
 	}
-	if (text == kStateReadyStr) {
-		state = EkinoxState::kReady;
+	if (text == kStateIdle) {
+		state = ServiceState::kIdle;
 		return true;
 	}
-	if (text == kStateRecordingStr) {
-		state = EkinoxState::kRecording;
+	if (text == kStateStarting) {
+		state = ServiceState::kStarting;
 		return true;
 	}
-	if (text == kStateErrorStr) {
-		state = EkinoxState::kError;
+	if (text == kStateRecording) {
+		state = ServiceState::kRecording;
 		return true;
 	}
-	if (text == kStateUnknownStr) {
-		state = EkinoxState::kUnknown;
+	if (text == kStateStopping) {
+		state = ServiceState::kStopping;
 		return true;
 	}
-	state = EkinoxState::kUnknown;
+	if (text == kStateError) {
+		state = ServiceState::kError;
+		return true;
+	}
+	state = ServiceState::kDisconnected;
 	return false;
 }
 
-inline constexpr std::string_view to_string(EkinoxCommandType type) noexcept {
+inline constexpr std::string_view to_string(CommandType type) noexcept {
 	switch (type) {
-	case EkinoxCommandType::kPing:
-		return kCmdPingStr;
-	case EkinoxCommandType::kStartRecording:
-		return kCmdStartRecordingStr;
-	case EkinoxCommandType::kStopRecording:
-		return kCmdStopRecordingStr;
+	case CommandType::kPing:
+		return kCmdPing;
+	case CommandType::kStartLogger:
+		return kCmdStartLogger;
+	case CommandType::kStopLogger:
+		return kCmdStopLogger;
 	default:
-		return kCmdPingStr;
+		return kCmdPing;
 	}
 }
 
-inline constexpr bool try_parse_command_type(std::string_view text, EkinoxCommandType& type) noexcept {
-	if (text == kCmdPingStr) {
-		type = EkinoxCommandType::kPing;
+inline constexpr bool try_parse_command_type(std::string_view text, CommandType& type) noexcept {
+	if (text == kCmdPing) {
+		type = CommandType::kPing;
 		return true;
 	}
-	if (text == kCmdStartRecordingStr) {
-		type = EkinoxCommandType::kStartRecording;
+	if (text == kCmdStartLogger) {
+		type = CommandType::kStartLogger;
 		return true;
 	}
-	if (text == kCmdStopRecordingStr) {
-		type = EkinoxCommandType::kStopRecording;
+	if (text == kCmdStopLogger) {
+		type = CommandType::kStopLogger;
 		return true;
 	}
-	type = EkinoxCommandType::kPing;
+	type = CommandType::kUnknown;
 	return false;
 }
 
