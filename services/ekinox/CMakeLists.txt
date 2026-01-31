@@ -1,11 +1,5 @@
-cmake_minimum_required(VERSION 3.16)
-project(ironsoft_ekinox LANGUAGES CXX)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(JSONCPP REQUIRED jsoncpp)
+pkg_check_modules(JSONCPP REQUIRED IMPORTED_TARGET jsoncpp)
 
 add_library(ekinox_config STATIC
     src/ekinox_config.cpp
@@ -13,14 +7,12 @@ add_library(ekinox_config STATIC
 
 target_include_directories(ekinox_config
     PUBLIC
-        include
-    PRIVATE
-        ${JSONCPP_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 target_link_libraries(ekinox_config
-    PRIVATE
-        ${JSONCPP_LIBRARIES}
+    PUBLIC
+        PkgConfig::JSONCPP
 )
 
 add_executable(ekinox_config_dump
