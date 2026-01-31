@@ -1,0 +1,21 @@
+{
+  "mqtt": {
+    "host": "127.0.0.1",
+    "port": 1883,
+    "drone_id": "drone001",
+    "auth": { "username": "", "password": "" },
+    "tls": { "enabled": false, "ca_file": "" }
+  },
+  "ekinox": {
+    "ip": "192.169.101.2",
+    "udp_port": 0,
+    "rest_port": 0
+  },
+  "timeouts": {
+    "rx_dead_ms": 1500,
+    "start_timeout_ms": 10000,
+    "stop_timeout_ms": 10000,
+    "reconnect_backoff_ms": 250,
+    "reconnect_backoff_max_ms": 2000
+  }
+}
