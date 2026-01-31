@@ -8,15 +8,17 @@
 #include "sbgErrorCodes.h"
 #endif
 
+
 namespace ironsoft::ekinox {
 
-void sbg_smoke_version() {
+	void sbg_smoke_version() {
 #if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)
-	const char* err = sbgEComErrorToString(SBG_NO_ERROR);
-	std::cout << "[ekinox] sbgECom linked OK: " << (err ? err : "unknown") << '\n';
+		char err[256] = { 0 };
+		sbgEComErrorToString(SBG_NO_ERROR, err);
+		std::cout << "[ekinox] sbgECom linked OK: " << (err[0] ? err : "unknown") << '\n';
 #else
-	std::cout << "[ekinox] sbgECom disabled (no SDK)" << '\n';
+		std::cout << "[ekinox] sbgECom disabled (no SDK)" << '\n';
 #endif
-}
+	}
 
-}  // namespace ironsoft::ekinox
+} // namespace ironsoft::ekinox
