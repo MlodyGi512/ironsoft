@@ -5,6 +5,7 @@
 
 #include "ironsoft/ekinox/ekinox_config.h"
 #include "ironsoft/ekinox/ekinox_service.h"
+#include "ironsoft/ekinox/sbg_smoke.h"
 
 namespace {
 std::atomic_bool g_stop{false};
@@ -42,6 +43,8 @@ int main(int argc, char** argv) {
 
 	std::signal(SIGINT, signal_handler);
 	std::signal(SIGTERM, signal_handler);
+
+	ironsoft::ekinox::sbg_smoke_version();
 
 	ironsoft::ekinox::EkinoxService service(config);
 	std::cout << "[ekinox] starting service, press Ctrl+C to stop" << std::endl;
