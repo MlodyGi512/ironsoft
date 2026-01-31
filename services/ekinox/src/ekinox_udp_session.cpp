@@ -71,7 +71,8 @@ bool EkinoxUdpSession::open(const Config& cfg, std::string& err) {
 	close();
 	config_ = cfg;
 	last_rx_ms_.store(0, std::memory_order_relaxed);
-	const SbgIpAddress remote_addr = sbgNetworkIpFromString(cfg.ip.c_str());
+	const sbgIpAddress remote_addr = sbgNetworkIpFromString(cfg.ip.c_str());
+
 	if (remote_addr == 0u) {
 		err = "invalid ip";
 		return false;
