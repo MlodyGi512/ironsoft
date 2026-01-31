@@ -7,8 +7,10 @@
 
 #if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)
 #include "sbgECom.h"
-#include <interfaces/sbgInterfaceUdp.h>
 #include "sbgErrorCodes.h"
+#include <interfaces/sbgInterface.h>
+#include <interfaces/sbgInterfaceUdp.h>
+#include <network/sbgNetwork.h>
 #endif
 
 namespace ironsoft::ekinox {
@@ -33,7 +35,12 @@ public:
 
 private:
 #if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)
-	static SbgErrorCode on_receive_log(SbgEComHandle* handle, SbgEComMsg* msg, const SbgBinaryLogData* data, void* user_data);
+	static SbgErrorCode on_receive_log(
+	    SbgEComHandle* handle,
+	    SbgEComClass msgClass,
+	    SbgEComMsgId msg,
+	    const SbgEComLogUnion* log_data,
+	    void* user_data);
 	static std::string error_to_string(SbgErrorCode code);
 #endif
 

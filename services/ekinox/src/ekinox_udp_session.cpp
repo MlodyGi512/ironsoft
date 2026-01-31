@@ -46,8 +46,8 @@ std::string EkinoxUdpSession::error_to_string(SbgErrorCode code) {
 		return "SBG_INVALID_PARAMETER";
 	case SBG_NULL_POINTER:
 		return "SBG_NULL_POINTER";
-	case SBG_TIMEOUT:
-		return "SBG_TIMEOUT";
+	case SBG_TIME_OUT:
+		return "SBG_TIME_OUT";
 	case SBG_ERROR:
 		return "SBG_ERROR";
 	default:
@@ -55,7 +55,12 @@ std::string EkinoxUdpSession::error_to_string(SbgErrorCode code) {
 	}
 }
 
-SbgErrorCode EkinoxUdpSession::on_receive_log(SbgEComHandle*, SbgEComMsg*, const SbgBinaryLogData*, void* user_data) {
+SbgErrorCode EkinoxUdpSession::on_receive_log(
+	SbgEComHandle*,
+	SbgEComClass,
+	SbgEComMsgId,
+	const SbgEComLogUnion*,
+	void* user_data) {
 	if (auto* self = static_cast<EkinoxUdpSession*>(user_data); self != nullptr) {
 		self->reset_last_rx();
 	}
@@ -66,33 +71,27 @@ bool EkinoxUdpSession::open(const Config& cfg, std::string& err) {
 	close();
 	config_ = cfg;
 	last_rx_ms_.store(0, std::memory_order_relaxed);
-	SbgErrorCode status = sbgInterfaceUdpCreate(&udp_interface_, cfg.ip.c_str(), cfg.remote_port, cfg.local_port);
+	const SbgIpAddress remote_addr = sbgNetworkIpFromString(cfg.ip.c_str());
+	if (remote_addr == 0u) {
+		err = "invalid ip";
+		return false;
+	}
+	SbgErrorCode status = sbgInterfaceUdpCreate(&udp_interface_, remote_addr, cfg.remote_port, cfg.local_port);
 	if (status != SBG_NO_ERROR) {
 		err = "sbgInterfaceUdpCreate: " + error_to_string(status);
 		return false;
 	}
 
-	status = sbgInterfaceUdpSetConnectedMode(&udp_interface_, true);
-	if (status != SBG_NO_ERROR) {
-		err = "sbgInterfaceUdpSetConnectedMode: " + error_to_string(status);
-		sbgInterfaceUdpDestroy(&udp_interface_);
-		return false;
-	}
+	sbgInterfaceUdpSetConnectedMode(&udp_interface_, true);
 
 	status = sbgEComInit(&ecom_handle_, &udp_interface_);
 	if (status != SBG_NO_ERROR) {
 		err = "sbgEComInit: " + error_to_string(status);
-		sbgInterfaceUdpDestroy(&udp_interface_);
+		sbgInterfaceDestroy(&udp_interface_);
 		return false;
 	}
 
-	status = sbgEComSetReceiveLogCallback(&ecom_handle_, &EkinoxUdpSession::on_receive_log, this);
-	if (status != SBG_NO_ERROR) {
-		err = "sbgEComSetReceiveLogCallback: " + error_to_string(status);
-		sbgEComClose(&ecom_handle_);
-		sbgInterfaceUdpDestroy(&udp_interface_);
-		return false;
-	}
+	sbgEComSetReceiveLogCallback(&ecom_handle_, &EkinoxUdpSession::on_receive_log, this);
 
 	reset_last_rx();
 	connected_ = true;
@@ -104,7 +103,7 @@ void EkinoxUdpSession::close() {
 		return;
 	}
 	sbgEComClose(&ecom_handle_);
-	sbgInterfaceUdpDestroy(&udp_interface_);
+	sbgInterfaceDestroy(&udp_interface_);
 	connected_ = false;
 }
 
@@ -115,6 +114,9 @@ bool EkinoxUdpSession::poll(std::string& err) {
 	}
 	const SbgErrorCode status = sbgEComHandleOneLog(&ecom_handle_);
 	if (status == SBG_NO_ERROR || status == SBG_NOT_READY) {
+		return true;
+	}
+	if (status == SBG_TIME_OUT) {
 		return true;
 	}
 	err = "sbgEComHandleOneLog: " + error_to_string(status);
