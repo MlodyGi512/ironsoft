@@ -17,8 +17,8 @@ void sbg_smoke_version() {
 	sbgEComErrorToString(SBG_NO_ERROR, err);
 	std::cout << "[ekinox] sbgECom linked OK: " << err << '\n';
 #else
-		std::cout << "[ekinox] sbgECom disabled (no SDK)" << '\n';
+	std::cout << "[ekinox] sbgECom disabled (no SDK)" << '\n';
 #endif
-	}
+}
 
 } // namespace ironsoft::ekinox
