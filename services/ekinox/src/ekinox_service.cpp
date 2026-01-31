@@ -47,22 +47,29 @@ EkinoxService::EkinoxService(EkinoxConfig config)
 	}
 
 	status_.state = ServiceState::kDisconnected;
-	status_.api_ok = true;
-	status_.link_alive = true;
+	status_.api_ok = false;
+	status_.link_alive = false;
 	presence_.online = false;
 	presence_.reason.clear();
 	presence_.timestamp = unix_ts();
 
 	start_tp_ = steady_clock::now();
-	last_rx_tp_ = start_tp_;
 	next_status_pub_ = start_tp_;
 	next_heartbeat_pub_ = start_tp_;
-	next_simulated_rx_ = start_tp_;
 	next_reconnect_attempt_ = start_tp_;
+	next_sensor_attempt_ = start_tp_;
 	current_backoff_ms_ = config_.timeouts.reconnect_backoff_ms;
+	udp_config_.ip = config_.ekinox.ip;
+	udp_config_.remote_port = static_cast<std::uint16_t>(std::max(config_.ekinox.udp_port, 0));
+	udp_config_.local_port = static_cast<std::uint16_t>(std::max(config_.ekinox.udp_local_port, 0));
+	udp_config_.rx_dead_ms = static_cast<std::uint32_t>(std::max(config_.timeouts.rx_dead_ms, 0));
+	udp_session_ = std::make_unique<EkinoxUdpSession>();
 }
 
 EkinoxService::~EkinoxService() {
+	if (udp_session_) {
+		udp_session_->close();
+	}
 	try {
 		if (connected_) {
 			client_.disconnect()->wait();
@@ -81,8 +88,8 @@ bool EkinoxService::run(std::atomic_bool& stop_flag) {
 
 		if (connected_) {
 			drain_commands();
-			simulate_link_tick(now);
-			update_watchdog(now);
+			ensure_sensor_session(now);
+			poll_sensor(now);
 			apply_pending_transition(now);
 
 			if (now >= next_status_pub_) {
@@ -99,12 +106,14 @@ bool EkinoxService::run(std::atomic_bool& stop_flag) {
 		std::this_thread::sleep_for(kLoopSleep);
 	}
 
+	if (sensor_connected_) {
+		handle_sensor_disconnect("shutdown");
+	}
 	if (connected_) {
 		publish_presence(false, "shutdown");
 		publish_status();
+		disconnect();
 	}
-
-	disconnect();
 	return true;
 }
 
@@ -113,6 +122,10 @@ void EkinoxService::connection_lost(const std::string& cause) {
 	connected_ = false;
 	presence_online_ = false;
 	status_.link_alive = false;
+	if (udp_session_) {
+		udp_session_->close();
+	}
+	sensor_connected_ = false;
 	set_state(ServiceState::kDisconnected);
 	next_reconnect_attempt_ = steady_clock::now();
 }
@@ -130,12 +143,12 @@ bool EkinoxService::connect_once() {
 		client_.subscribe(topics_.cmd, 1)->wait();
 		connected_ = true;
 		presence_online_ = false;
-		status_.link_alive = true;
-		status_.api_ok = true;
+		status_.link_alive = false;
+		status_.api_ok = false;
 		status_.recording_active = false;
 		pending_transition_.reset();
-		set_state(ServiceState::kIdle);
-		publish_presence(true, "");
+		set_state(ServiceState::kConnecting);
+		publish_presence(false, "connecting");
 		publish_status();
 		std::cout << "[ekinox] Connected" << '\n';
 		return true;
@@ -180,6 +193,16 @@ void EkinoxService::ensure_connection(time_point now) {
 }
 
 void EkinoxService::publish_presence(bool online, const std::string& reason) {
+	if (!connected_) {
+		presence_.online = online;
+		presence_.reason = reason;
+		presence_.timestamp = unix_ts();
+		presence_online_ = online;
+		return;
+	}
+	if (presence_online_ == online && presence_.reason == reason) {
+		return;
+	}
 	presence_.online = online;
 	presence_.reason = reason;
 	presence_.timestamp = unix_ts();
@@ -192,6 +215,9 @@ void EkinoxService::publish_presence(bool online, const std::string& reason) {
 }
 
 void EkinoxService::publish_status() {
+	if (!connected_) {
+		return;
+	}
 	Json::Value payload = build_status_json(status_);
 	auto msg = mqtt::make_message(topics_.status, serialize_json(payload));
 	msg->set_qos(1);
@@ -200,6 +226,9 @@ void EkinoxService::publish_status() {
 }
 
 void EkinoxService::publish_heartbeat(std::int64_t uptime_s) {
+	if (!connected_) {
+		return;
+	}
 	Json::Value payload = build_heartbeat_json(++heartbeat_seq_, uptime_s);
 	auto msg = mqtt::make_message(topics_.heartbeat, serialize_json(payload));
 	msg->set_qos(0);
@@ -208,6 +237,9 @@ void EkinoxService::publish_heartbeat(std::int64_t uptime_s) {
 }
 
 void EkinoxService::publish_ack(const std::string& payload) {
+	if (!connected_) {
+		return;
+	}
 	auto msg = mqtt::make_message(topics_.ack, payload);
 	msg->set_qos(1);
 	msg->set_retained(false);
@@ -319,23 +351,83 @@ void EkinoxService::apply_pending_transition(time_point now) {
 	pending_transition_.reset();
 }
 
-void EkinoxService::simulate_link_tick(time_point now) {
-	if (now >= next_simulated_rx_) {
-		// TODO: In prompt 4/6 feed the real UDP RX timestamp from the transport instead of this stub timer.
-		last_rx_tp_ = now;
-		status_.link_alive = true;
-		next_simulated_rx_ = now + std::chrono::milliseconds(250);
+void EkinoxService::ensure_sensor_session(time_point now) {
+#if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)
+	if (sensor_connected_) {
+		return;
 	}
+	if (!udp_session_) {
+		udp_session_ = std::make_unique<EkinoxUdpSession>();
+	}
+	if (!next_sensor_attempt_) {
+		next_sensor_attempt_ = now;
+	}
+	if (now < *next_sensor_attempt_) {
+		return;
+	}
+	std::string err;
+	if (!udp_session_->open(udp_config_, err)) {
+		status_.api_ok = false;
+		status_.link_alive = false;
+		set_error(err);
+		publish_presence(false, err);
+		current_backoff_ms_ = std::min(current_backoff_ms_ * 2, config_.timeouts.reconnect_backoff_max_ms);
+		next_sensor_attempt_ = now + std::chrono::milliseconds(current_backoff_ms_);
+		set_state(ServiceState::kConnecting);
+		return;
+	}
+	sensor_connected_ = true;
+	status_.api_ok = true;
+	status_.link_alive = true;
+	current_backoff_ms_ = config_.timeouts.reconnect_backoff_ms;
+	set_state(ServiceState::kIdle);
+	publish_presence(true, "");
+	next_sensor_attempt_.reset();
+#else
+	(void)now;
+	status_.api_ok = false;
+	status_.link_alive = false;
+	if (!reported_no_sbg_) {
+		reported_no_sbg_ = true;
+		set_error("sbgECom unavailable");
+		publish_presence(false, "sbg disabled");
+	}
+#endif
 }
 
-void EkinoxService::update_watchdog(time_point now) {
-	const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_rx_tp_);
-	if (elapsed.count() > config_.timeouts.rx_dead_ms) {
-		status_.link_alive = false;
-		set_state(ServiceState::kDisconnected);
+void EkinoxService::poll_sensor(time_point now) {
+	if (!sensor_connected_ || !udp_session_) {
+		return;
+	}
+	std::string err;
+	if (!udp_session_->poll(err)) {
+		handle_sensor_error(err);
+		return;
+	}
+	const auto age = udp_session_->last_rx_age_ms(now);
+	if (age > static_cast<std::int64_t>(config_.timeouts.rx_dead_ms)) {
+		handle_sensor_disconnect("rx timeout");
 		return;
 	}
 	status_.link_alive = true;
+	status_.api_ok = true;
+}
+
+void EkinoxService::handle_sensor_error(const std::string& reason) {
+	set_error(reason);
+	handle_sensor_disconnect(reason);
+}
+
+void EkinoxService::handle_sensor_disconnect(const std::string& reason) {
+	if (udp_session_) {
+		udp_session_->close();
+	}
+	sensor_connected_ = false;
+	status_.link_alive = false;
+	status_.api_ok = false;
+	publish_presence(false, reason);
+	set_state(ServiceState::kConnecting);
+	next_sensor_attempt_ = steady_clock::now() + std::chrono::milliseconds(current_backoff_ms_);
 }
 
 void EkinoxService::set_state(ServiceState state) {

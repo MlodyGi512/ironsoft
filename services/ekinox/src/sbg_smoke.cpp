@@ -13,9 +13,8 @@ namespace ironsoft::ekinox {
 
 	void sbg_smoke_version() {
 #if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)
-		char err[256] = { 0 };
-		sbgEComErrorToString(SBG_NO_ERROR, err);
-		std::cout << "[ekinox] sbgECom linked OK: " << (err[0] ? err : "unknown") << '\n';
+		const char* err = sbgEComErrorToString(SBG_NO_ERROR);
+		std::cout << "[ekinox] sbgECom linked OK: " << (err ? err : "unknown") << '\n';
 #else
 		std::cout << "[ekinox] sbgECom disabled (no SDK)" << '\n';
 #endif

@@ -62,4 +62,11 @@ Press `Ctrl+C` in terminal B.
 - Service publishes retained `presence` with `state:"offline"` and `reason:"shutdown"`.
 - `status` retained payload shows `link_alive:false` and `state:"DISCONNECTED"`.
 
+## 6. SBG UDP link (hardware required)
+1. Ensure the SBG Ekinox sensor is reachable from the Raspberry Pi (default IP `192.169.101.2`).
+2. When the service starts, `presence` should transition from `offline` (`reason:"connecting"`) to `online` once the UDP link is established; `status.state` switches to `IDLE` and `api_ok:true`.
+3. Unplug the Ekinox Ethernet cable (or power off the device):
+   - Within `rx_dead_ms` (~1.5 s) the service publishes `presence` `offline` with `reason:"rx timeout"` and `status` flips to `CONNECTING` with `link_alive:false`, `api_ok:false`.
+4. Plug the sensor back in: observe `presence` returning to `online` and `status` back to `IDLE` without restarting the process.
+
 Record console logs and MQTT captures for regressions before finishing the test.

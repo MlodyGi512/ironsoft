@@ -139,6 +139,12 @@ bool loadEkinoxConfig(const std::string& path, EkinoxConfig& cfg, std::string& e
 		}
 	}
 
+	if (const Json::Value& udp_local = ekinox["udp_local_port"]; !udp_local.isNull()) {
+		if (!validate_port(udp_local, "ekinox.udp_local_port", true, err, cfg.ekinox.udp_local_port)) {
+			return false;
+		}
+	}
+
 	if (const Json::Value& rest = ekinox["rest_port"]; !rest.isNull()) {
 		if (!validate_port(rest, "ekinox.rest_port", true, err, cfg.ekinox.rest_port)) {
 			return false;

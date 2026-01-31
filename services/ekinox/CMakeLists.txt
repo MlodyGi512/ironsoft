@@ -65,6 +65,7 @@ add_executable(ekinox_service
     src/main.cpp
     src/ekinox_service.cpp
     src/ekinox_state.cpp
+    src/ekinox_udp_session.cpp
     src/sbg_smoke.cpp
 )
 

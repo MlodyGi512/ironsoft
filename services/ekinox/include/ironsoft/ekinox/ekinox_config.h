@@ -20,6 +20,7 @@ struct MqttCfg {
 struct EkinoxNetCfg {
 	std::string ip;
 	int udp_port = 0;
+	int udp_local_port = 0;
 	int rest_port = 0;
 };
 
