@@ -5,6 +5,10 @@
 
 #include <jsoncpp/json/json.h>
 
+#if ORTHO_ENABLE_GRPC
+#include <grpcpp/grpcpp.h>
+#endif
+
 #include "ironsoft/mqtt_config.h"
 #include "ironsoft/topics.h"
 #include "mqtt_client.h"
@@ -91,6 +95,10 @@ int main(int argc, char** argv) {
             << "Broker: " << cfg.host << ":" << cfg.port << "\n"
             << "Drone ID: " << cfg.drone_id << "\n"
             << "Topics prefix: " << topics.prefix << "\n";
+
+#if !ORTHO_ENABLE_GRPC
+  std::cout << "gRPC disabled\n";
+#endif
 
   MqttBackendClient mqtt(cfg, topics, st);
   mqtt.start(handle_cmd_ping_only);
