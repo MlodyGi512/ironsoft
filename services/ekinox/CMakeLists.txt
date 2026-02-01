@@ -88,6 +88,7 @@ if(EKINOX_HAS_SBG)
     target_include_directories(ekinox_service PRIVATE
         ${SBG_ECOM_ROOT}
         ${SBG_ECOM_ROOT}/src
+        ${SBG_ECOM_ROOT}/src/commands
         ${SBG_ECOM_ROOT}/common
         ${SBG_ECOM_ROOT}/common/interfaces
         ${SBG_ECOM_ROOT}/common/network

@@ -48,7 +48,7 @@ private:
 		const std::string& message,
 		const std::string& err);
 	void drain_commands();
-	void handle_command_message(const std::string& payload);
+	void handle_command_message(const std::string& topic, const std::string& payload);
 	void handle_logger_start(const std::string& id, const std::string& type);
 	void handle_logger_stop(const std::string& id, const std::string& type);
 	void handle_logger_status(const std::string& id, const std::string& type);
@@ -83,7 +83,11 @@ private:
 	StatusPayload status_{};
 	PresencePayload presence_{};
 
-	std::queue<std::string> pending_commands_;
+	struct CommandMessage {
+		std::string topic;
+		std::string payload;
+	};
+	std::queue<CommandMessage> pending_commands_;
 	std::mutex commands_mutex_;
 
 	std::optional<std::chrono::steady_clock::time_point> next_reconnect_attempt_;

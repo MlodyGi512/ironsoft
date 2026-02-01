@@ -1,7 +1,7 @@
 #include "ironsoft/ekinox/ekinox_logger_api.h"
 
 #if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)
-#include "sbgEComCmdApi.h"
+#include "commands/sbgEComCmdApi.h"
 #endif
 
 namespace ironsoft::ekinox {

@@ -146,7 +146,7 @@ void EkinoxService::message_arrived(mqtt::const_message_ptr msg) {
 	const auto payload = msg->get_payload_str();
 	std::cout << "[ekinox] RX mqtt topic=" << topic << " payload=" << payload << '\n';
 	std::lock_guard<std::mutex> lock(commands_mutex_);
-	pending_commands_.push(payload);
+	pending_commands_.push(CommandMessage{topic, payload});
 }
 
 bool EkinoxService::connect_once() {
@@ -170,7 +170,6 @@ bool EkinoxService::connect_once() {
 		status_.link_alive = false;
 		status_.api_ok = false;
 		status_.recording_active = false;
-		pending_transition_.reset();
 		set_state(ServiceState::kConnecting);
 		publish_presence(false, "connecting");
 		publish_status();
@@ -311,25 +310,26 @@ void EkinoxService::publish_ack(const std::string& type,
 }
 
 void EkinoxService::drain_commands() {
-	std::queue<std::string> local;
+	std::queue<CommandMessage> local;
 	{
 		std::lock_guard<std::mutex> lock(commands_mutex_);
 		std::swap(local, pending_commands_);
 	}
 	while (!local.empty()) {
-		handle_command_message(local.front());
+		handle_command_message(local.front().topic, local.front().payload);
 		local.pop();
 	}
 }
 
-void EkinoxService::handle_command_message(const std::string& payload) {
+void EkinoxService::handle_command_message(const std::string& topic, const std::string& payload) {
 	Json::CharReaderBuilder rb;
 	rb["collectComments"] = false;
 	Json::Value root;
 	std::string errs;
 	std::unique_ptr<Json::CharReader> reader(rb.newCharReader());
-	const auto log_rx_type = [](const std::string& type, const std::string& id) {
-		std::cout << "[ekinox] RX cmd type=" << (type.empty() ? "-" : type)
+	const auto log_rx_type = [&topic](const std::string& type, const std::string& id) {
+		std::cout << "[ekinox] RX cmd topic=" << topic
+			<< " type=" << (type.empty() ? "-" : type)
 			<< " id=" << (id.empty() ? "-" : id) << '\n';
 	};
 	if (!reader->parse(payload.data(), payload.data() + payload.size(), &root, &errs)) {
