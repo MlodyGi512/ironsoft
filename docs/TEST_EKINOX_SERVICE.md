@@ -3,6 +3,11 @@
 This checklist validates the standalone `ekinox_service` process on Linux/Raspberry Pi. It assumes Mosquitto is reachable on the same LAN and the config file `config/ekinox.json` points to the desired broker and drone ID.
 
 ---
+## Dependencies (RPi/Debian)
+```bash
+sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+```
+
 ## 1. Build
 ```bash
 cd ~/ironsoft-uav

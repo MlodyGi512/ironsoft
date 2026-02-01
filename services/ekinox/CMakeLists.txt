@@ -60,6 +60,7 @@ add_executable(ekinox_config_dump
 target_link_libraries(ekinox_config_dump
     PRIVATE
         ekinox_config
+        CURL::libcurl
 )
 
 add_executable(ekinox_service
