@@ -126,6 +126,23 @@ void MainWindow::logUi(const QString& line) {
     ui->textLog->append(line);
 }
 
+void MainWindow::logUiState(const QString& tag) {
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  const qint64 heartbeatAge = (lastHeartbeatMs_ > 0) ? (now - lastHeartbeatMs_) : -1;
+  const QString mode = hasStatus_ ? (lastStatus_.mode.isEmpty() ? QStringLiteral("<empty>") : lastStatus_.mode) : QStringLiteral("<none>");
+  const QString api = hasStatus_ ? (lastStatus_.api_ok ? QStringLiteral("true") : QStringLiteral("false")) : QStringLiteral("<n/a>");
+  const QString lastErr = hasStatus_ ? (lastStatus_.last_error.isEmpty() ? QStringLiteral("<empty>") : lastStatus_.last_error) : QStringLiteral("<n/a>");
+  logUi(QStringLiteral("[ui-state][%1] mqttConnected=%2 presenceOnline=%3 heartbeatAgeMs=%4 hasStatus=%5 mode=%6 api_ok=%7 last_error=%8")
+            .arg(tag)
+            .arg(clientState_ == MqttConnectionState::Connected ? QStringLiteral("true") : QStringLiteral("false"))
+            .arg(presenceOnline_ ? QStringLiteral("true") : QStringLiteral("false"))
+            .arg(heartbeatAge)
+            .arg(hasStatus_ ? QStringLiteral("true") : QStringLiteral("false"))
+            .arg(mode)
+            .arg(api)
+            .arg(lastErr));
+}
+
 
 MainWindow::~MainWindow() {
   delete ui;
