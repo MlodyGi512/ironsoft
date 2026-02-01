@@ -72,6 +72,7 @@ private:
 
 private:
 	static constexpr std::uint32_t kLoggerRunningMask = 0x1u;
+	static constexpr int kRxTimeoutStreakToReconnect = 5;
 
 	EkinoxConfig config_;
 	EkinoxTopics topics_;
@@ -96,6 +97,7 @@ private:
 	bool connected_ = false;
 	bool presence_online_ = false;
 	bool sensor_connected_ = false;
+	int rx_timeout_streak_ = 0;
 	std::int64_t heartbeat_seq_ = 0;
 	time_point start_tp_{};
 	time_point next_status_pub_{};

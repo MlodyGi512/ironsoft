@@ -597,16 +597,37 @@ void EkinoxService::poll_sensor(time_point now) {
 	}
 	std::string err;
 	if (!udp_session_->poll(err)) {
+		rx_timeout_streak_ = 0;
 		handle_sensor_error(err);
 		return;
 	}
 	const auto age = udp_session_->last_rx_age_ms(now);
-	if (age > static_cast<std::int64_t>(config_.timeouts.rx_dead_ms)) {
-		handle_sensor_disconnect("rx timeout");
+	const auto rx_dead_ms = static_cast<std::int64_t>(config_.timeouts.rx_dead_ms);
+	if (age > rx_dead_ms) {
+		++rx_timeout_streak_;
+		if (rx_timeout_streak_ == 1) {
+			std::cout << "[ekinox] sensor rx timeout detected" << '\n';
+		}
+		status_.link_alive = false;
+		status_.api_ok = false;
+		if (presence_online_) {
+			publish_presence(false, "rx timeout");
+		}
+		if (rx_timeout_streak_ >= kRxTimeoutStreakToReconnect) {
+			std::cout << "[ekinox] sensor rx timeout streak=" << rx_timeout_streak_ << " reconnecting" << '\n';
+			handle_sensor_disconnect("rx timeout");
+		}
 		return;
 	}
+	if (rx_timeout_streak_ > 0) {
+		std::cout << "[ekinox] sensor rx timeout cleared after streak=" << rx_timeout_streak_ << '\n';
+	}
+	rx_timeout_streak_ = 0;
 	status_.link_alive = true;
 	status_.api_ok = true;
+	if (!presence_online_) {
+		publish_presence(true, "");
+	}
 }
 
 void EkinoxService::handle_sensor_error(const std::string& reason) {
@@ -615,6 +636,7 @@ void EkinoxService::handle_sensor_error(const std::string& reason) {
 }
 
 void EkinoxService::handle_sensor_disconnect(const std::string& reason) {
+	rx_timeout_streak_ = 0;
 	if (udp_session_) {
 		udp_session_->close();
 	}
