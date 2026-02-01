@@ -54,6 +54,7 @@ MainWindow::MainWindow(QWidget* parent)
   connect(&mqtt_, &MqttPahoClient::ackReceived, this, &MainWindow::onAckReceived);
   connect(&mqtt_, &MqttPahoClient::ekinoxPresenceChanged, this, &MainWindow::onEkinoxPresenceChanged);
   connect(&mqtt_, &MqttPahoClient::ekinoxStatusChanged, this, &MainWindow::onEkinoxStatusChanged);
+  connect(&mqtt_, &MqttPahoClient::ekinoxHeartbeatReceived, this, &MainWindow::onEkinoxHeartbeatReceived);
 
   updateUiForState(clientState_);
   ui->btnPing->setEnabled(false);
@@ -296,6 +297,8 @@ void MainWindow::onConnectedChanged(bool connected) {
     presenceOnline_ = false;
     lastHeartbeatMs_ = 0;
     setPresenceLed(false);
+    ekinoxPresenceOnline_ = false;
+    lastEkinoxHeartbeatMs_ = 0;
   }
   updateBackendHealth();
   updateLoggerControls();
@@ -306,8 +309,6 @@ void MainWindow::onPresenceChanged(bool online) {
   if (!online) {
     lastHeartbeatMs_ = 0;
   }
-  setPresenceLed(online);
-  updateBackendHealth();
   logUiState(QStringLiteral("afterPresence"));
 }
 
@@ -360,6 +361,8 @@ void MainWindow::onAckReceived(const QString& type, const QString& id, bool ok) 
 void MainWindow::onEkinoxPresenceChanged(bool online) {
   ekinoxPresenceOnline_ = online;
   logUi(tr("[ekinox] presence %1").arg(online ? tr("online") : tr("offline")));
+  setPresenceLed(online);
+  updateBackendHealth();
   updateLoggerControls();
 }
 
@@ -372,6 +375,11 @@ void MainWindow::onEkinoxStatusChanged(const EkinoxStatus& st) {
             .arg(st.session_name.isEmpty() ? tr("-") : st.session_name)
             .arg(st.link_alive ? tr("1") : tr("0")));
   updateLoggerControls();
+}
+
+void MainWindow::onEkinoxHeartbeatReceived() {
+  lastEkinoxHeartbeatMs_ = QDateTime::currentMSecsSinceEpoch();
+  updateBackendHealth();
 }
 
 void MainWindow::updateUiForState(MqttConnectionState state) {
@@ -401,17 +409,27 @@ void MainWindow::updateUiForState(MqttConnectionState state) {
 }
 
 void MainWindow::updateBackendHealth() {
+  const bool mqttConnected = (clientState_ == MqttConnectionState::Connected);
+  const bool ekinoxOnline = ekinoxPresenceOnline_;
   BackendHealth next = BackendHealth::Offline;
-  if (clientState_ == MqttConnectionState::Connected && presenceOnline_) {
-    if (lastHeartbeatMs_ == 0) {
-      next = BackendHealth::Stale;
-    } else {
-      const qint64 now = QDateTime::currentMSecsSinceEpoch();
-      const qint64 delta = now - lastHeartbeatMs_;
-      next = (delta <= kHeartbeatTimeoutMs) ? BackendHealth::Online : BackendHealth::Stale;
-    }
+  if (mqttConnected && ekinoxOnline) {
+    next = BackendHealth::Online;
   }
   setBackendLed(next);
+
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  const qint64 ekinoxHbAge = (lastEkinoxHeartbeatMs_ > 0) ? (now - lastEkinoxHeartbeatMs_) : -1;
+  if (mqttConnected != lastLedLogMqttConnected_ ||
+      ekinoxOnline != lastLedLogEkinoxOnline_ ||
+      next != lastLedLogState_) {
+    logUi(tr("[ui-led] mqtt=%1 ekinoxOnline=%2 ekinoxHbAge=%3")
+              .arg(mqttConnected ? QStringLiteral("1") : QStringLiteral("0"))
+              .arg(ekinoxOnline ? QStringLiteral("1") : QStringLiteral("0"))
+              .arg(ekinoxHbAge));
+    lastLedLogMqttConnected_ = mqttConnected;
+    lastLedLogEkinoxOnline_ = ekinoxOnline;
+    lastLedLogState_ = next;
+  }
 }
 
 void MainWindow::updateLoggerControls() {

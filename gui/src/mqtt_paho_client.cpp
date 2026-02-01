@@ -270,6 +270,10 @@ void MqttPahoClient::emitHeartbeat() {
   QMetaObject::invokeMethod(this, [this]() { emit heartbeatReceived(); }, Qt::QueuedConnection);
 }
 
+void MqttPahoClient::emitEkinoxHeartbeat() {
+  QMetaObject::invokeMethod(this, [this]() { emit ekinoxHeartbeatReceived(); }, Qt::QueuedConnection);
+}
+
 void MqttPahoClient::emitPingUpdate(const QString& id, qint64 rttMs, bool timeout) {
   QMetaObject::invokeMethod(
       this,
@@ -439,8 +443,7 @@ void MqttPahoClient::workerLoop() {
       client_->subscribe(tEkinoxPresence().toStdString(), 1)->wait();
       client_->subscribe(tEkinoxStatus().toStdString(), 1)->wait();
       client_->subscribe(tEkinoxHeartbeat().toStdString(), 0)->wait();
-      client_->subscribe(tEkinoxAck().toStdString(), 1)->wait();
-      emitLog(QString("[%1] subscribed presence/status/heartbeat/ack + ekinox topics").arg(nowStr()));
+      emitLog(QString("[%1] subscribed presence/status/heartbeat + ekinox topics").arg(nowStr()));
 
       const QString topicDump = QString(
                                       "MQTT topics:\n"
@@ -455,8 +458,7 @@ void MqttPahoClient::workerLoop() {
                                       "  ack=%9\n"
                                       "  ekinox/presence=%10\n"
                                       "  ekinox/status=%11\n"
-                                      "  ekinox/heartbeat=%12\n"
-                                      "  ekinox/ack=%13")
+                                      "  ekinox/heartbeat=%12")
                                   .arg(QString::fromStdString(serverURI))
                                   .arg(QString::fromStdString(clientId))
                                   .arg(cfg.droneId)
@@ -468,8 +470,7 @@ void MqttPahoClient::workerLoop() {
                                   .arg(tAck())
                                   .arg(tEkinoxPresence())
                                   .arg(tEkinoxStatus())
-                                  .arg(tEkinoxHeartbeat())
-                                  .arg(tEkinoxAck());
+                                  .arg(tEkinoxHeartbeat());
       emitLog(QString("[%1] %2").arg(nowStr(), topicDump));
 
       client_->start_consuming();
@@ -591,8 +592,7 @@ void MqttPahoClient::workerLoop() {
           }
         } else if (topic == tEkinoxHeartbeat()) {
           emitLog(QString("[%1] <- ekinox heartbeat").arg(nowStr()));
-        } else if (topic == tEkinoxAck()) {
-          handleAckMessage(QStringLiteral("ekinox/ack"));
+          emitEkinoxHeartbeat();
         }
       }
 

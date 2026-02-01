@@ -57,6 +57,7 @@ private slots:
   void onAckReceived(const QString& type, const QString& id, bool ok);
   void onEkinoxPresenceChanged(bool online);
   void onEkinoxStatusChanged(const EkinoxStatus& st);
+  void onEkinoxHeartbeatReceived();
 
 private:
   Ui::MainWindow* ui;
@@ -72,9 +73,13 @@ private:
   EkinoxStatus lastEkinoxStatus_{};
   bool hasEkinoxStatus_ = false;
   bool ekinoxPresenceOnline_ = false;
+  qint64 lastEkinoxHeartbeatMs_ = 0;
   bool loggerControlsInitialized_ = false;
   bool lastStartEnabled_ = false;
   bool lastStopEnabled_ = false;
   bool lastRecordingActive_ = false;
+  bool lastLedLogMqttConnected_ = false;
+  bool lastLedLogEkinoxOnline_ = false;
+  BackendHealth lastLedLogState_ = BackendHealth::Offline;
   static constexpr int kHeartbeatTimeoutMs = 3000;
 };

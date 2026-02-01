@@ -201,6 +201,16 @@ bool EkinoxService::connect_once() {
 		};
 		subscribe_and_log(topics_.cmd);
 		subscribe_and_log(topics_.cmd_legacy);
+		std::cout << "[ekinox] MQTT topics:\n"
+			<< "  server_uri=" << server_uri_ << '\n'
+			<< "  drone_id=" << config_.mqtt.drone_id << '\n'
+			<< "  cmd=" << topics_.cmd << '\n'
+			<< "  cmd_legacy=" << (topics_.cmd_legacy.empty() ? "-" : topics_.cmd_legacy) << '\n'
+			<< "  ack=" << topics_.ack << '\n'
+			<< "  ack_legacy=" << (topics_.ack_legacy.empty() ? "-" : topics_.ack_legacy) << '\n'
+			<< "  ekinox/status=" << topics_.status << '\n'
+			<< "  ekinox/presence=" << topics_.presence << '\n'
+			<< "  ekinox/heartbeat=" << topics_.heartbeat << '\n';
 		connected_ = true;
 		presence_online_ = false;
 		status_.link_alive = false;

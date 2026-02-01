@@ -74,6 +74,7 @@ signals:
   void presenceChanged(bool online);
   void stateChanged(MqttConnectionState state);
   void heartbeatReceived();
+  void ekinoxHeartbeatReceived();
   void statusChanged(const BackendStatus& st);
   void pingUpdated(const QString& id, qint64 rttMs, bool timeout);
   void ackReceived(const QString& type, const QString& id, bool ok);
@@ -91,7 +92,6 @@ private:
   QString tEkinoxPresence() const { return tEkinoxPrefix() + "/presence"; }
   QString tEkinoxStatus() const { return tEkinoxPrefix() + "/status"; }
   QString tEkinoxHeartbeat() const { return tEkinoxPrefix() + "/heartbeat"; }
-  QString tEkinoxAck() const { return tEkinoxPrefix() + "/ack"; }
 
   void workerLoop();
   void setConnected(bool v);
@@ -99,6 +99,7 @@ private:
   void setState(MqttConnectionState state);
   void emitLog(const QString& line);
   void emitHeartbeat();
+  void emitEkinoxHeartbeat();
   void emitPingUpdate(const QString& id, qint64 rttMs, bool timeout);
   void emitAckEvent(const QString& type, const QString& id, bool ok);
   void emitEkinoxPresence(bool online);
