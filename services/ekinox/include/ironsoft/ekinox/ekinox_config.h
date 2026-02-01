@@ -24,6 +24,12 @@ struct EkinoxNetCfg {
 	int rest_port = 0;
 };
 
+struct RestApiConfig {
+	std::string start_path;
+	std::string stop_path;
+	std::string status_path;
+};
+
 struct EkinoxTimeouts {
 	int rx_dead_ms = 1500;
 	int start_timeout_ms = 10000;
@@ -36,6 +42,7 @@ struct EkinoxConfig {
 	MqttCfg mqtt;
 	EkinoxNetCfg ekinox;
 	EkinoxTimeouts timeouts;
+	RestApiConfig rest_api;
 };
 
 bool load_json_file(const std::string& path, Json::Value& out, std::string& err);

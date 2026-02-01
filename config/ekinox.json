@@ -18,5 +18,10 @@
     "stop_timeout_ms": 10000,
     "reconnect_backoff_ms": 250,
     "reconnect_backoff_max_ms": 2000
+  },
+  "rest_api": {
+    "start_path": "/api/logger/start",
+    "stop_path": "/api/logger/stop",
+    "status_path": "/api/logger/status"
   }
 }

@@ -177,6 +177,30 @@ bool loadEkinoxConfig(const std::string& path, EkinoxConfig& cfg, std::string& e
 		}
 	}
 
+	const Json::Value& rest_api = root["rest_api"];
+	if (!rest_api.isObject()) {
+		err = "missing rest_api";
+		return false;
+	}
+	auto read_path = [&](const char* field, std::string& target) -> bool {
+		const Json::Value& value = rest_api[field];
+		if (!value.isString() || value.asString().empty()) {
+			err = std::string{"missing rest_api."} + field;
+			return false;
+		}
+		target = value.asString();
+		return true;
+	};
+	if (!read_path("start_path", cfg.rest_api.start_path)) {
+		return false;
+	}
+	if (!read_path("stop_path", cfg.rest_api.stop_path)) {
+		return false;
+	}
+	if (!read_path("status_path", cfg.rest_api.status_path)) {
+		return false;
+	}
+
 	return true;
 }
 

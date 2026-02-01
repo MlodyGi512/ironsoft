@@ -399,7 +399,7 @@ void EkinoxService::handle_logger_start(const std::string& id, const std::string
 	}
 	set_state(ServiceState::kStarting);
 	publish_status();
-	LoggerResult result = EkinoxLoggerApi::start(handle);
+    LoggerResult result = EkinoxLoggerApi::start(handle, config_.rest_api);
 	if (result.ok) {
 		status_.recording_active = true;
 		status_.api_ok = true;
@@ -445,7 +445,7 @@ void EkinoxService::handle_logger_stop(const std::string& id, const std::string&
 	}
 	set_state(ServiceState::kStopping);
 	publish_status();
-	LoggerResult result = EkinoxLoggerApi::stop(handle);
+    LoggerResult result = EkinoxLoggerApi::stop(handle, config_.rest_api);
 	if (result.ok) {
 		status_.recording_active = false;
 		status_.api_ok = true;
@@ -484,7 +484,7 @@ void EkinoxService::handle_logger_status(const std::string& id, const std::strin
 		return;
 	}
 	std::uint32_t raw_status = 0;
-	LoggerResult result = EkinoxLoggerApi::status(handle, raw_status);
+    LoggerResult result = EkinoxLoggerApi::status(handle, raw_status, config_.rest_api);
 	if (result.ok) {
 		status_.api_ok = true;
 		status_.last_error.clear();

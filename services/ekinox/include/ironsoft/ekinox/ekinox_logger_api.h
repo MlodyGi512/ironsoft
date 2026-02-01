@@ -12,6 +12,8 @@ struct SbgEComHandle;
 
 namespace ironsoft::ekinox {
 
+struct RestApiConfig;
+
 struct LoggerResult {
 	bool ok = false;
 	int error_code = 0;
@@ -20,9 +22,9 @@ struct LoggerResult {
 
 class EkinoxLoggerApi {
 public:
-	static LoggerResult start(SbgEComHandle* handle);
-	static LoggerResult stop(SbgEComHandle* handle);
-	static LoggerResult status(SbgEComHandle* handle, std::uint32_t& out_status);
+	static LoggerResult start(SbgEComHandle* handle, const RestApiConfig& api);
+	static LoggerResult stop(SbgEComHandle* handle, const RestApiConfig& api);
+	static LoggerResult status(SbgEComHandle* handle, std::uint32_t& out_status, const RestApiConfig& api);
 };
 
 }  // namespace ironsoft::ekinox

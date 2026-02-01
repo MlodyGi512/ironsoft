@@ -35,6 +35,7 @@ int main(int argc, char** argv) {
 	std::cout << "MQTT: " << config.mqtt.host << ':' << config.mqtt.port << " drone_id=" << config.mqtt.drone_id << '\n';
 	std::cout << "  auth user='" << config.mqtt.username << "' tls=" << (config.mqtt.tls_enabled ? "on" : "off") << '\n';
 	std::cout << "Ekinox IP: " << config.ekinox.ip << " udp=" << config.ekinox.udp_port << " rest=" << config.ekinox.rest_port << '\n';
+	std::cout << "REST API: start='" << config.rest_api.start_path << "' stop='" << config.rest_api.stop_path << "' status='" << config.rest_api.status_path << "'" << '\n';
 	std::cout << "Timeouts: rx_dead=" << config.timeouts.rx_dead_ms << "ms start=" << config.timeouts.start_timeout_ms
 	          << "ms stop=" << config.timeouts.stop_timeout_ms << "ms" << '\n';
 	std::cout << "  reconnect_backoff=" << config.timeouts.reconnect_backoff_ms << "ms max=" << config.timeouts.reconnect_backoff_max_ms << "ms" << '\n';
