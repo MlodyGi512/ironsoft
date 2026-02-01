@@ -32,22 +32,4 @@ Json::Value build_heartbeat_json(std::int64_t seq, std::int64_t uptime_s) {
 	return root;
 }
 
-Json::Value build_ack_json(const std::string& id,
-	const std::string& type,
-	bool ok,
-	const std::string& message,
-	const std::string& error,
-	int http_code,
-	std::int64_t ts) {
-	Json::Value root;
-	root["id"] = id;
-	root["type"] = type;
-	root["ok"] = ok;
-	root["message"] = message;
-	root["err"] = error;
-	root["http_code"] = http_code;
-	root["ts"] = static_cast<Json::Int64>(ts);
-	return root;
-}
-
 }  // namespace ironsoft::ekinox

@@ -14,13 +14,14 @@ struct EkinoxTopics {
 };
 
 inline EkinoxTopics make_topics(const std::string& drone_id) {
+	const std::string root = "ironsoft/uav/" + drone_id;
 	EkinoxTopics t;
-	t.prefix = "ironsoft/uav/" + drone_id + "/ekinox";
+	t.prefix = root + "/ekinox";
 	t.presence = t.prefix + "/presence";
 	t.status = t.prefix + "/status";
 	t.heartbeat = t.prefix + "/heartbeat";
-	t.cmd = t.prefix + "/cmd";
-	t.ack = t.prefix + "/ack";
+	t.cmd = root + "/cmd";
+	t.ack = root + "/ack";
 	return t;
 }
 

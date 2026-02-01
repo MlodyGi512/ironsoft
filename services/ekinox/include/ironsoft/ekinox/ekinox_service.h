@@ -41,7 +41,7 @@ private:
 	void publish_presence(bool online, const std::string& reason);
 	void publish_status();
 	void publish_heartbeat(std::int64_t uptime_s);
-	void publish_ack(const std::string& payload);
+	void publish_ack(const std::string& type, const std::string& id, int http_code, const std::string& err);
 	void drain_commands();
 	void handle_command_message(const std::string& payload);
 	void handle_logger_start(const std::string& id, const std::string& type);

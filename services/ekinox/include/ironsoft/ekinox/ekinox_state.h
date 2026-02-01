@@ -27,12 +27,5 @@ struct StatusPayload {
 Json::Value build_presence_json(const PresencePayload& payload);
 Json::Value build_status_json(const StatusPayload& payload);
 Json::Value build_heartbeat_json(std::int64_t seq, std::int64_t uptime_s);
-Json::Value build_ack_json(const std::string& id,
-	const std::string& type,
-	bool ok,
-	const std::string& message,
-	const std::string& error,
-	int http_code,
-	std::int64_t ts);
 
 }  // namespace ironsoft::ekinox
