@@ -17,10 +17,18 @@ struct LoggerResult {
 	bool has_recording_flag = false;
 	bool recording_active = false;
 	std::string session_name;
+	std::string status_value;
+	std::string mode;
+	bool has_write_speed = false;
+	int write_speed = 0;
 };
 
 class EkinoxLoggerApi {
 public:
+	static std::string buildBaseUrl(const EkinoxConfig& config, const RestApiConfig& api);
+	static LoggerResult dataLoggerGet(const EkinoxConfig& config, const RestApiConfig& api);
+	static LoggerResult dataLoggerStart(const EkinoxConfig& config, const RestApiConfig& api, const std::string& session_name);
+	static LoggerResult dataLoggerStop(const EkinoxConfig& config, const RestApiConfig& api);
 	static LoggerResult get_datalogger_info(const EkinoxConfig& config, const RestApiConfig& api);
 	static LoggerResult get_datalogger_status(const EkinoxConfig& config, const RestApiConfig& api);
 	static LoggerResult start_datalogger(const EkinoxConfig& config, const RestApiConfig& api, const std::string& session_name);

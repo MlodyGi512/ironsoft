@@ -69,6 +69,7 @@ private:
 	void update_link_health(const std::string& reason);
 	void refresh_rest_health(time_point now);
 	void set_udp_link_alive(bool alive, const std::string& reason);
+	LoggerResult request_logger_state(const std::string& context_reason);
 	std::string generate_session_name() const;
 	std::string extract_session_name(const Json::Value& cmd) const;
 	void set_state(ServiceState state);

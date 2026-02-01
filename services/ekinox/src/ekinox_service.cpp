@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <ctime>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -23,6 +24,7 @@ namespace {
 constexpr std::chrono::milliseconds kLoopSleep{50};
 constexpr std::chrono::seconds kStatusInterval{1};
 constexpr std::chrono::seconds kHeartbeatInterval{1};
+constexpr std::chrono::seconds kVerificationDelay{1};
 
 std::string make_client_id() {
 	const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -31,6 +33,26 @@ std::string make_client_id() {
 
 int http_code_or_default(const LoggerResult& result, int fallback) {
 	return static_cast<int>(result.http_code != 0 ? result.http_code : fallback);
+}
+
+std::string rest_error_or_http(const LoggerResult& result) {
+	if (!result.body.empty()) {
+		return result.body;
+	}
+	if (!result.error_string.empty()) {
+		return result.error_string;
+	}
+	if (result.http_code > 0) {
+		return "HTTP_" + std::to_string(result.http_code);
+	}
+	if (result.error_code != 0) {
+		return "HTTP_" + std::to_string(result.error_code);
+	}
+	return {};
+}
+
+bool logger_state_matches(const LoggerResult& result, bool expected) {
+	return result.ok && result.has_recording_flag && (result.recording_active == expected);
 }
 
 }  // namespace
@@ -430,31 +452,38 @@ void EkinoxService::handle_logger_start(const std::string& id, const std::string
 	}
 	set_state(ServiceState::kStarting);
 	publish_status();
-	LoggerResult start_result = EkinoxLoggerApi::start_datalogger(config_, config_.rest_api, session_name);
+	LoggerResult start_result = EkinoxLoggerApi::dataLoggerStart(config_, config_.rest_api, session_name);
 	mark_rest_result(start_result, "logger.start");
+	const int start_http_code = http_code_or_default(start_result, 500);
 	if (!start_result.ok) {
-		const std::string err = !start_result.error_string.empty() ? start_result.error_string : "logger.start failed";
+		const bool not_found = (start_result.http_code == 404);
+		set_state(not_found ? ServiceState::kIdle : ServiceState::kError);
+		std::string err = rest_error_or_http(start_result);
+		if (err.empty()) {
+			err = "HTTP_" + std::to_string(start_http_code);
+		}
 		set_error(err);
 		publish_status();
-		send_ack(id, type, false, "", err, http_code_or_default(start_result, 500));
+		std::string message = (start_result.http_code == 409) ? "already recording" : "start failed";
+		send_ack(id, type, false, message, err, start_http_code);
 		return;
 	}
-	status_.recording_active = true;
-	set_state(ServiceState::kRecording);
-	LoggerResult status_result = EkinoxLoggerApi::get_datalogger_status(config_, config_.rest_api);
-	mark_rest_result(status_result, "logger.status");
-	if (status_result.ok) {
-		status_.last_error.clear();
-		if (status_result.has_recording_flag) {
-			status_.recording_active = status_result.recording_active;
-			set_state(status_.recording_active ? ServiceState::kRecording : ServiceState::kIdle);
-		}
-	} else if (!status_result.error_string.empty()) {
-		set_error(status_result.error_string);
-	}
+	LoggerResult verify_now = request_logger_state("logger.start.verify.now");
+	std::this_thread::sleep_for(kVerificationDelay);
+	LoggerResult verify_later = request_logger_state("logger.start.verify.later");
+	const bool confirmed = logger_state_matches(verify_now, true) || logger_state_matches(verify_later, true);
 	publish_status();
-	const std::string message = !start_result.message.empty() ? start_result.message : "recording started";
-	send_ack(id, type, true, message, "", http_code_or_default(start_result, 200));
+	if (confirmed) {
+		send_ack(id, type, true, "recording started", "", start_http_code);
+		return;
+	}
+	const LoggerResult& failing = verify_later.ok ? verify_later : verify_now;
+	std::string verify_err = rest_error_or_http(failing);
+	if (verify_err.empty()) {
+		verify_err = "state_not_confirmed";
+	}
+	const int verify_code = http_code_or_default(failing, start_http_code);
+	send_ack(id, type, false, "recording not confirmed", verify_err, verify_code);
 }
 
 void EkinoxService::handle_logger_stop(const std::string& id, const std::string& type, const Json::Value& cmd) {
@@ -476,31 +505,38 @@ void EkinoxService::handle_logger_stop(const std::string& id, const std::string&
 	}
 	set_state(ServiceState::kStopping);
 	publish_status();
-	LoggerResult stop_result = EkinoxLoggerApi::stop_datalogger(config_, config_.rest_api);
+	LoggerResult stop_result = EkinoxLoggerApi::dataLoggerStop(config_, config_.rest_api);
 	mark_rest_result(stop_result, "logger.stop");
+	const int stop_http_code = http_code_or_default(stop_result, 500);
 	if (!stop_result.ok) {
-		const std::string err = !stop_result.error_string.empty() ? stop_result.error_string : "logger.stop failed";
+		const bool not_found = (stop_result.http_code == 404);
+		set_state(not_found ? ServiceState::kIdle : ServiceState::kError);
+		std::string err = rest_error_or_http(stop_result);
+		if (err.empty()) {
+			err = "HTTP_" + std::to_string(stop_http_code);
+		}
 		set_error(err);
 		publish_status();
-		send_ack(id, type, false, "", err, http_code_or_default(stop_result, 500));
+		std::string message = (stop_result.http_code == 409 || stop_result.http_code == 500) ? "no active session" : "stop failed";
+		send_ack(id, type, false, message, err, stop_http_code);
 		return;
 	}
-	status_.recording_active = false;
-	set_state(ServiceState::kIdle);
-	LoggerResult status_result = EkinoxLoggerApi::get_datalogger_status(config_, config_.rest_api);
-	mark_rest_result(status_result, "logger.status");
-	if (status_result.ok) {
-		status_.last_error.clear();
-		if (status_result.has_recording_flag) {
-			status_.recording_active = status_result.recording_active;
-			set_state(status_.recording_active ? ServiceState::kRecording : ServiceState::kIdle);
-		}
-	} else if (!status_result.error_string.empty()) {
-		set_error(status_result.error_string);
-	}
+	LoggerResult verify_now = request_logger_state("logger.stop.verify.now");
+	std::this_thread::sleep_for(kVerificationDelay);
+	LoggerResult verify_later = request_logger_state("logger.stop.verify.later");
+	const bool confirmed = logger_state_matches(verify_now, false) || logger_state_matches(verify_later, false);
 	publish_status();
-	const std::string message = !stop_result.message.empty() ? stop_result.message : "recording stopped";
-	send_ack(id, type, true, message, "", http_code_or_default(stop_result, 200));
+	if (confirmed) {
+		send_ack(id, type, true, "recording stopped", "", stop_http_code);
+		return;
+	}
+	const LoggerResult& failing = verify_later.ok ? verify_later : verify_now;
+	std::string verify_err = rest_error_or_http(failing);
+	if (verify_err.empty()) {
+		verify_err = "state_not_confirmed";
+	}
+	const int verify_code = http_code_or_default(failing, stop_http_code);
+	send_ack(id, type, false, "recording still active", verify_err, verify_code);
 }
 
 void EkinoxService::handle_logger_status(const std::string& id, const std::string& type, const Json::Value& cmd) {
@@ -520,22 +556,17 @@ void EkinoxService::handle_logger_status(const std::string& id, const std::strin
 		send_ack(id, type, false, rest_reason, "bad_config", 400);
 		return;
 	}
-	LoggerResult result = EkinoxLoggerApi::get_datalogger_status(config_, config_.rest_api);
-	mark_rest_result(result, "logger.status");
+	LoggerResult result = request_logger_state("logger.status.cmd");
+	publish_status();
 	if (result.ok) {
-		status_.last_error.clear();
-		if (result.has_recording_flag) {
-			status_.recording_active = result.recording_active;
-			set_state(result.recording_active ? ServiceState::kRecording : ServiceState::kIdle);
-		}
-		publish_status();
 		const std::string message = !result.message.empty() ? result.message : (status_.recording_active ? "recording active" : "recording inactive");
 		send_ack(id, type, true, message, "", http_code_or_default(result, 200));
 		return;
 	}
-	const std::string err = !result.error_string.empty() ? result.error_string : "logger.status failed";
-	set_error(err);
-	publish_status();
+	std::string err = rest_error_or_http(result);
+	if (err.empty()) {
+		err = "HTTP_" + std::to_string(http_code_or_default(result, 500));
+	}
 	send_ack(id, type, false, "", err, http_code_or_default(result, 500));
 }
 
@@ -630,9 +661,44 @@ void EkinoxService::set_udp_link_alive(bool alive, const std::string& reason) {
 	update_link_health(reason);
 }
 
+LoggerResult EkinoxService::request_logger_state(const std::string& context_reason) {
+	LoggerResult result = EkinoxLoggerApi::dataLoggerGet(config_, config_.rest_api);
+	mark_rest_result(result, context_reason);
+	if (result.ok) {
+		status_.last_error.clear();
+		if (result.has_recording_flag) {
+			status_.recording_active = result.recording_active;
+			set_state(result.recording_active ? ServiceState::kRecording : ServiceState::kIdle);
+		}
+		return result;
+	}
+	std::string err = rest_error_or_http(result);
+	if (err.empty()) {
+		err = context_reason;
+	}
+	if (!err.empty()) {
+		set_error(err);
+	}
+	if (result.http_code == 404) {
+		status_.recording_active = false;
+		set_state(ServiceState::kIdle);
+	} else {
+		set_state(ServiceState::kError);
+	}
+	return result;
+}
+
 std::string EkinoxService::generate_session_name() const {
+	const auto now = std::chrono::system_clock::now();
+	const std::time_t tt = std::chrono::system_clock::to_time_t(now);
+	std::tm tm_utc{};
+#if defined(_WIN32)
+	gmtime_s(&tm_utc, &tt);
+#else
+	gmtime_r(&tt, &tm_utc);
+#endif
 	std::ostringstream oss;
-	oss << "IronSoft_" << unix_ts();
+	oss << "IronSoft_" << std::put_time(&tm_utc, "%Y%m%d_%H%M%S");
 	return oss.str();
 }
 

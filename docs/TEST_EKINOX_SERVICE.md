@@ -2,6 +2,12 @@
 
 This checklist validates the standalone `ekinox_service` process on Linux/Raspberry Pi. It assumes Mosquitto is reachable on the same LAN and the config file `config/ekinox.json` points to the desired broker and drone ID.
 
+> **REST endpoints**: the service talks to `http://<ekinox-ip>:<rest_port>/api/v1/dataLogger`.
+> - `GET /api/v1/dataLogger` returns the status JSON (fields: `status`, `mode`, `sessionName`, `writeSpeed`, ...).
+> - `POST /api/v1/dataLogger/start` requires `Content-Type: application/json` and body `{"sessionName":"<name>"}`.
+> - `POST /api/v1/dataLogger/stop` accepts an empty JSON body (`{}`) and stops the current session.
+> Endpoints such as `/api/logger/status` are invalid and must not be used (404 response).
+
 ---
 ## Dependencies (RPi/Debian)
 ```bash
@@ -46,17 +52,18 @@ Expect `ack` with `type:"ping"`, `ok:true`, `http_code:200`, `message:"pong"`.
 ### 4.2 Logger start
 ```bash
 mosquitto_pub -h 127.0.0.1 -t ironsoft/uav/drone001/cmd \
-  -m '{"type":"logger.start","id":"cmd-2","ts":'$((`date +%s`))'}'
+  -m '{"type":"logger.start","id":"cmd-2","ts":'$((`date +%s`))',"sessionName":"IronSoft_demo"}'
 ```
 - `ack` contains `type:"logger.start"`, `ok:true`, `http_code:200`.
-- `status` retained payload shows `mode:"RECORDING"`, `recording:true`, `api_ok:true`.
+- `ack.message` is `"recording started"` and `ack.err` is empty when the REST call succeeded.
+- `status` retained payload shows `mode:"RECORDING"`, `recording:true`, `api_ok:true`, and by default the generated session name follows `IronSoft_YYYYMMDD_HHMMSS` (UTC) if none was provided.
 
 ### 4.3 Logger stop
 ```bash
 mosquitto_pub -h 127.0.0.1 -t ironsoft/uav/drone001/cmd \
   -m '{"type":"logger.stop","id":"cmd-3","ts":'$((`date +%s`))'}'
 ```
-- `ack` reports `type:"logger.stop"`, `ok:true`.
+- `ack` reports `type:"logger.stop"`, `ok:true`, `message:"recording stopped"`.
 - `status` returns to `mode:"IDLE"`, `recording:false`.
 
 ### 4.4 Logger status
@@ -64,11 +71,11 @@ mosquitto_pub -h 127.0.0.1 -t ironsoft/uav/drone001/cmd \
 mosquitto_pub -h 127.0.0.1 -t ironsoft/uav/drone001/cmd \
   -m '{"type":"logger.status","id":"cmd-4","ts":'$((`date +%s`))'}'
 ```
-- `ack` message body shows `status=0x0` (idle) or `0x1` (recording).
+- `ack` message mirrors the REST `status` field (e.g., `"recording"` or `"ready"`) and `ack.err` stays empty when HTTP 200 is returned.
 - `status.api_ok` remains true when the sensor replies.
 
 ### 4.5 Invalid transition
-While IDLE, send another `logger.stop` and expect `ack` with `ok:false`, `http_code:409`, `err:"INVALID_STATE"`; `status.last_error` updates.
+While IDLE, send another `logger.stop` and expect `ack` with `ok:false`, `message:"no active session"`, and `err` echoing the REST body (for example `HTTP_409`); `status.last_error` updates.
 
 ## 5. Shutdown behavior
 Press `Ctrl+C` in terminal B.

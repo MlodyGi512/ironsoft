@@ -25,10 +25,8 @@ std::once_flag g_curl_init_once;
 
 struct RestPaths {
 	std::string base;
-	std::string status;
 	std::string start;
 	std::string stop;
-	std::string end;
 };
 
 void ensure_curl_global_init() {
@@ -110,10 +108,8 @@ std::string join_paths(const std::string& lhs, const std::string& rhs) {
 RestPaths build_paths(const RestApiConfig& api) {
 	RestPaths paths;
 	paths.base = join_paths(api.base_path, api.datalogger_path);
-	paths.status = join_paths(paths.base, "status");
 	paths.start = join_paths(paths.base, "start");
 	paths.stop = join_paths(paths.base, "stop");
-	paths.end = join_paths(paths.base, "end");
 	return paths;
 }
 
@@ -122,6 +118,11 @@ std::string build_url(const EkinoxConfig& config, const std::string& path) {
 	oss << "http://" << config.ekinox.ip << ':' << config.ekinox.rest_port;
 	oss << ensure_leading_slash(path);
 	return oss.str();
+}
+
+std::string build_datalogger_base_url(const EkinoxConfig& config, const RestApiConfig& api) {
+	const auto paths = build_paths(api);
+	return build_url(config, paths.base);
 }
 
 void enrich_from_json(LoggerResult& result) {
@@ -139,6 +140,47 @@ void enrich_from_json(LoggerResult& result) {
 	if (!root.isObject()) {
 		return;
 	}
+	bool used_heuristic = false;
+	bool recording_via_heuristic = false;
+	if (const Json::Value& status = root["status"]; status.isString()) {
+		result.status_value = status.asString();
+		used_heuristic = true;
+		if (result.status_value == "recording") {
+			recording_via_heuristic = true;
+		}
+	}
+	if (const Json::Value& mode = root["mode"]; mode.isString()) {
+		result.mode = mode.asString();
+	}
+	if (const Json::Value& session = root["sessionName"]; session.isString()) {
+		result.session_name = session.asString();
+		if (!result.session_name.empty() && result.status_value != "ready") {
+			used_heuristic = true;
+			if (result.status_value != "ready") {
+				recording_via_heuristic = true;
+			}
+		}
+	}
+	if (const Json::Value& write_speed = root["writeSpeed"]; write_speed.isNumeric()) {
+		result.has_write_speed = true;
+		result.write_speed = write_speed.asInt();
+		used_heuristic = true;
+		if (result.write_speed > 0) {
+			recording_via_heuristic = true;
+		}
+	}
+	if (result.status_value.empty()) {
+		if (const Json::Value& state = root["state"]; state.isString()) {
+			result.status_value = state.asString();
+		}
+	}
+	if (result.message.empty()) {
+		if (!result.status_value.empty()) {
+			result.message = result.status_value;
+		} else if (!result.mode.empty()) {
+			result.message = result.mode;
+		}
+	}
 	auto assign_bool = [&](const Json::Value& value) {
 		if (value.isBool()) {
 			result.has_recording_flag = true;
@@ -147,21 +189,16 @@ void enrich_from_json(LoggerResult& result) {
 		}
 		return false;
 	};
+	if (used_heuristic) {
+		result.has_recording_flag = true;
+		result.recording_active = recording_via_heuristic;
+		return;
+	}
 	if (!assign_bool(root["recording"])) {
 		if (!assign_bool(root["isRecording"])) {
 			if (!assign_bool(root["recording_active"])) {
 				assign_bool(root["active"]);
 			}
-		}
-	}
-	if (const Json::Value& session = root["sessionName"]; session.isString()) {
-		result.session_name = session.asString();
-	}
-	if (result.message.empty()) {
-		if (const Json::Value& state = root["state"]; state.isString()) {
-			result.message = state.asString();
-		} else if (const Json::Value& status = root["status"]; status.isString()) {
-			result.message = status.asString();
 		}
 	}
 }
@@ -266,28 +303,22 @@ LoggerResult call_with_validation(const EkinoxConfig& config, const std::functio
 
 }  // namespace
 
-LoggerResult EkinoxLoggerApi::get_datalogger_info(const EkinoxConfig& config, const RestApiConfig& api) {
+std::string EkinoxLoggerApi::buildBaseUrl(const EkinoxConfig& config, const RestApiConfig& api) {
+	LoggerResult error;
+	if (!validate_rest_target(config, error)) {
+		return {};
+	}
+	return build_datalogger_base_url(config, api);
+}
+
+LoggerResult EkinoxLoggerApi::dataLoggerGet(const EkinoxConfig& config, const RestApiConfig& api) {
 	return call_with_validation(config, [&]() {
 		const auto paths = build_paths(api);
 		return http_get(config, paths.base);
 	});
 }
 
-LoggerResult EkinoxLoggerApi::get_datalogger_status(const EkinoxConfig& config, const RestApiConfig& api) {
-	return call_with_validation(config, [&]() {
-		const auto paths = build_paths(api);
-		LoggerResult result = http_get(config, paths.status);
-		if (result.ok) {
-			return result;
-		}
-		if (result.http_code == 404 || result.http_code == 501) {
-			return http_get(config, paths.base);
-		}
-		return result;
-	});
-}
-
-LoggerResult EkinoxLoggerApi::start_datalogger(const EkinoxConfig& config, const RestApiConfig& api, const std::string& session_name) {
+LoggerResult EkinoxLoggerApi::dataLoggerStart(const EkinoxConfig& config, const RestApiConfig& api, const std::string& session_name) {
 	return call_with_validation(config, [&]() {
 		const auto paths = build_paths(api);
 		Json::Value payload_json;
@@ -299,35 +330,27 @@ LoggerResult EkinoxLoggerApi::start_datalogger(const EkinoxConfig& config, const
 	});
 }
 
-LoggerResult EkinoxLoggerApi::stop_datalogger(const EkinoxConfig& config, const RestApiConfig& api) {
+LoggerResult EkinoxLoggerApi::dataLoggerStop(const EkinoxConfig& config, const RestApiConfig& api) {
 	return call_with_validation(config, [&]() {
 		const auto paths = build_paths(api);
-		struct Attempt {
-			std::string path;
-			std::string payload;
-			bool send_json = false;
-		};
-		const Attempt attempts[] = {
-			{paths.stop, "{}", true},
-			{paths.stop, std::string{}, false},
-			{paths.end, "{}", true},
-		};
-		LoggerResult last_result;
-		for (const auto& attempt : attempts) {
-			if (attempt.path.empty()) {
-				continue;
-			}
-			last_result = http_post(config, attempt.path, attempt.payload, attempt.send_json);
-			if (last_result.ok) {
-				return last_result;
-			}
-			if (last_result.http_code == 404 || last_result.http_code == 405 || last_result.http_code == 501) {
-				continue;
-			}
-			break;
-		}
-		return last_result;
+		return http_post(config, paths.stop, "{}", true);
 	});
+}
+
+LoggerResult EkinoxLoggerApi::get_datalogger_info(const EkinoxConfig& config, const RestApiConfig& api) {
+	return dataLoggerGet(config, api);
+}
+
+LoggerResult EkinoxLoggerApi::get_datalogger_status(const EkinoxConfig& config, const RestApiConfig& api) {
+	return dataLoggerGet(config, api);
+}
+
+LoggerResult EkinoxLoggerApi::start_datalogger(const EkinoxConfig& config, const RestApiConfig& api, const std::string& session_name) {
+	return dataLoggerStart(config, api, session_name);
+}
+
+LoggerResult EkinoxLoggerApi::stop_datalogger(const EkinoxConfig& config, const RestApiConfig& api) {
+	return dataLoggerStop(config, api);
 }
 
 }  // namespace ironsoft::ekinox
