@@ -37,7 +37,18 @@ struct BackendStatus {
   bool recording_active = false;
   QString session_name;
 };
+
+struct EkinoxStatus {
+  QString state;
+  QString mode;
+  bool link_alive = false;
+  bool recording_active = false;
+  QString session_name;
+  QString last_error;
+  qint64 ts = 0;
+};
 Q_DECLARE_METATYPE(BackendStatus)
+Q_DECLARE_METATYPE(EkinoxStatus)
 
 // Minimal MQTT client for Qt GUI using Paho MQTT C++ (async_client).
 // Runs the MQTT loop in a dedicated std::thread and communicates with UI via Qt signals.
@@ -66,6 +77,8 @@ signals:
   void statusChanged(const BackendStatus& st);
   void pingUpdated(const QString& id, qint64 rttMs, bool timeout);
   void ackReceived(const QString& type, const QString& id, bool ok);
+  void ekinoxPresenceChanged(bool online);
+  void ekinoxStatusChanged(const EkinoxStatus& st);
 
 private:
   QString topicPrefix() const;
@@ -74,6 +87,11 @@ private:
   QString tHeartbeat() const { return topicPrefix() + "/heartbeat"; }
   QString tAck() const { return topicPrefix() + "/ack"; }
   QString tCmd() const { return topicPrefix() + "/cmd"; }
+  QString tEkinoxPrefix() const { return topicPrefix() + "/ekinox"; }
+  QString tEkinoxPresence() const { return tEkinoxPrefix() + "/presence"; }
+  QString tEkinoxStatus() const { return tEkinoxPrefix() + "/status"; }
+  QString tEkinoxHeartbeat() const { return tEkinoxPrefix() + "/heartbeat"; }
+  QString tEkinoxAck() const { return tEkinoxPrefix() + "/ack"; }
 
   void workerLoop();
   void setConnected(bool v);
@@ -83,8 +101,11 @@ private:
   void emitHeartbeat();
   void emitPingUpdate(const QString& id, qint64 rttMs, bool timeout);
   void emitAckEvent(const QString& type, const QString& id, bool ok);
+  void emitEkinoxPresence(bool online);
+  void emitEkinoxStatus(const EkinoxStatus& st);
   void handlePingTimeout(const QString& id);
   bool parseStatusJson(const QByteArray& payload, BackendStatus& out, QString& err);
+  bool parseEkinoxStatusJson(const QByteArray& payload, EkinoxStatus& out, QString& err);
   bool publishCommandPayload(const QJsonObject& obj, const QString& logLine);
 
 private:

@@ -10,6 +10,9 @@
 #include <QMessageBox>
 #include <QMetaType>
 #include <QSettings>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QUuid>
 
 static QString readFileText(const QString& path) {
   QFile f(path);
@@ -33,6 +36,7 @@ MainWindow::MainWindow(QWidget* parent)
   setPingRttDisplay(-1, false);
   qRegisterMetaType<MqttConnectionState>("MqttConnectionState");
   qRegisterMetaType<BackendStatus>("BackendStatus");
+  qRegisterMetaType<EkinoxStatus>("EkinoxStatus");
 
   connect(ui->btnConnect, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
   connect(ui->btnPing, &QPushButton::clicked, this, &MainWindow::onPingClicked);
@@ -48,6 +52,8 @@ MainWindow::MainWindow(QWidget* parent)
   connect(&mqtt_, &MqttPahoClient::statusChanged, this, &MainWindow::onStatusChanged);
   connect(&mqtt_, &MqttPahoClient::pingUpdated, this, &MainWindow::onPingUpdated);
   connect(&mqtt_, &MqttPahoClient::ackReceived, this, &MainWindow::onAckReceived);
+  connect(&mqtt_, &MqttPahoClient::ekinoxPresenceChanged, this, &MainWindow::onEkinoxPresenceChanged);
+  connect(&mqtt_, &MqttPahoClient::ekinoxStatusChanged, this, &MainWindow::onEkinoxStatusChanged);
 
   updateUiForState(clientState_);
   ui->btnPing->setEnabled(false);
@@ -233,6 +239,7 @@ void MainWindow::onConnectClicked() {
     currentConfig_ = cfg;
     mqtt_.setConfig(cfg);
     mqtt_.connectToBroker();
+    QTimer::singleShot(1000, this, [this]() { logUiState(QStringLiteral("afterConnect")); });
   } else {
     mqtt_.stop();
   }
@@ -284,6 +291,7 @@ void MainWindow::onPresenceChanged(bool online) {
   }
   setPresenceLed(online);
   updateBackendHealth();
+  logUiState(QStringLiteral("afterPresence"));
 }
 
 void MainWindow::onClientStateChanged(MqttConnectionState state) {
@@ -299,6 +307,7 @@ void MainWindow::onClientStateChanged(MqttConnectionState state) {
 void MainWindow::onHeartbeatReceived() {
   lastHeartbeatMs_ = QDateTime::currentMSecsSinceEpoch();
   updateBackendHealth();
+  logUiState(QStringLiteral("afterHeartbeat"));
 }
 
 void MainWindow::onHeartbeatTick() {
@@ -312,6 +321,7 @@ void MainWindow::onStatusChanged(const BackendStatus& st) {
   lastStatus_ = st;
   hasStatus_ = true;
   updateLoggerControls();
+  logUiState(QStringLiteral("afterStatus"));
 }
 
 void MainWindow::onPingUpdated(const QString& /*id*/, qint64 rttMs, bool timeout) {
@@ -322,10 +332,29 @@ void MainWindow::onAckReceived(const QString& type, const QString& id, bool ok) 
   const QString prettyType = type.isEmpty() ? QStringLiteral("-") : type;
   const QString line = tr("[ack] type=%1 id=%2 ok=%3").arg(prettyType, id.isEmpty() ? QStringLiteral("-") : id, ok ? QStringLiteral("1") : QStringLiteral("0"));
   logUi(line);
-  if (prettyType == QStringLiteral("logger.stop") || prettyType == QStringLiteral("session.stop")) {
+  const bool isStopAck = (prettyType == QStringLiteral("logger.stop") || prettyType == QStringLiteral("session.stop"));
+  if (isStopAck) {
+    logUi(tr("[gui] Stop ACK received (id=%1, ok=%2)").arg(id.isEmpty() ? QStringLiteral("-") : id, ok ? QStringLiteral("1") : QStringLiteral("0")));
     updateLoggerControls();
     requestDeferredStatusRefresh();
   }
+}
+
+void MainWindow::onEkinoxPresenceChanged(bool online) {
+  ekinoxPresenceOnline_ = online;
+  logUi(tr("[ekinox] presence %1").arg(online ? tr("online") : tr("offline")));
+  updateLoggerControls();
+}
+
+void MainWindow::onEkinoxStatusChanged(const EkinoxStatus& st) {
+  hasEkinoxStatus_ = true;
+  lastEkinoxStatus_ = st;
+  logUi(tr("[ekinox] status mode=%1 recording=%2 session='%3' link_alive=%4")
+            .arg(st.mode.isEmpty() ? tr("-") : st.mode)
+            .arg(st.recording_active ? tr("1") : tr("0"))
+            .arg(st.session_name.isEmpty() ? tr("-") : st.session_name)
+            .arg(st.link_alive ? tr("1") : tr("0")));
+  updateLoggerControls();
 }
 
 void MainWindow::updateUiForState(MqttConnectionState state) {
@@ -371,9 +400,43 @@ void MainWindow::updateBackendHealth() {
 void MainWindow::updateLoggerControls() {
   if (!ui) return;
   const bool connected = (clientState_ == MqttConnectionState::Connected);
-  const bool recording = hasStatus_ && lastStatus_.recording_active;
-  ui->btnLoggerStart->setEnabled(connected && !recording);
-  ui->btnLoggerStop->setEnabled(connected && recording);
+  const bool ekinoxLinkAlive = ekinoxPresenceOnline_ || (hasEkinoxStatus_ && lastEkinoxStatus_.link_alive);
+  const bool recording = hasEkinoxStatus_ && lastEkinoxStatus_.recording_active;
+  const bool enableStart = connected && ekinoxLinkAlive && !recording;
+  const bool enableStop = connected && ekinoxLinkAlive && recording;
+  const bool enableSessionInput = !recording;
+
+  const auto logStateChange = [this](const QString& control, bool enabled) {
+    logUi(tr("[ui] %1 %2").arg(control, enabled ? tr("enabled") : tr("disabled")));
+  };
+
+  if (!loggerControlsInitialized_ || enableStart != lastStartEnabled_) {
+    logStateChange(tr("Start session"), enableStart);
+    lastStartEnabled_ = enableStart;
+  }
+  if (!loggerControlsInitialized_ || enableStop != lastStopEnabled_) {
+    logStateChange(tr("Stop session"), enableStop);
+    lastStopEnabled_ = enableStop;
+  }
+
+  ui->btnLoggerStart->setEnabled(enableStart);
+  ui->btnLoggerStop->setEnabled(enableStop);
+  ui->editSessionName->setEnabled(enableSessionInput);
+
+  if (!loggerControlsInitialized_ || recording != lastRecordingActive_) {
+    logUi(tr("[ui] Recording state -> %1").arg(recording ? tr("active") : tr("idle")));
+    lastRecordingActive_ = recording;
+  }
+
+  if (!enableStop) {
+    logUi(tr("[ui] Stop disabled because: mqttConnected=%1 ekinoxLinkAlive=%2 recordingActive=%3 hasEkinoxStatus=%4")
+              .arg(connected ? "1" : "0")
+              .arg(ekinoxLinkAlive ? "1" : "0")
+              .arg(recording ? "1" : "0")
+              .arg(hasEkinoxStatus_ ? "1" : "0"));
+  }
+
+  loggerControlsInitialized_ = true;
 
   const QString indicator = recording ? tr("RECORDING") : tr("IDLE");
   const QString indicatorStyle = recording
@@ -382,8 +445,8 @@ void MainWindow::updateLoggerControls() {
   ui->labelRecordingValue->setText(indicator);
   ui->labelRecordingValue->setStyleSheet(indicatorStyle);
 
-  const QString sessionText = (hasStatus_ && !lastStatus_.session_name.isEmpty())
-      ? lastStatus_.session_name
+  const QString sessionText = (hasEkinoxStatus_ && !lastEkinoxStatus_.session_name.isEmpty())
+      ? lastEkinoxStatus_.session_name
       : QStringLiteral("—");
   ui->labelSessionValue->setText(sessionText);
 }
@@ -396,6 +459,7 @@ void MainWindow::onLoggerStartClicked() {
 
   const QString sessionName = desiredSessionName();
   const QString id = makeLoggerCmdId(QStringLiteral("gui_start_"));
+  logUi(tr("[gui] Start clicked (session=%1, id=%2)").arg(sessionName, id));
   if (!mqtt_.publishLoggerStart(id, sessionName)) {
     logUi(tr("[gui] failed to publish logger.start"));
     return;
@@ -411,6 +475,12 @@ void MainWindow::onLoggerStopClicked() {
   }
 
   const QString id = makeLoggerCmdId(QStringLiteral("gui_stop_"));
+  logUi(tr("[gui] Stop clicked (id=%1)").arg(id));
+  QJsonObject cmd;
+  cmd.insert(QStringLiteral("type"), QStringLiteral("logger.stop"));
+  cmd.insert(QStringLiteral("id"), id);
+  const QString payload = QString::fromUtf8(QJsonDocument(cmd).toJson(QJsonDocument::Compact));
+  logUi(tr("[ui] publishing stop: %1").arg(payload));
   if (!mqtt_.publishLoggerStop(id)) {
     logUi(tr("[gui] failed to publish logger.stop"));
     return;
@@ -431,8 +501,11 @@ QString MainWindow::generateSessionName() const {
 }
 
 QString MainWindow::makeLoggerCmdId(const QString& prefix) {
-  ++loggerCmdSeq_;
-  return QStringLiteral("%1%2").arg(prefix).arg(loggerCmdSeq_);
+  const QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  if (prefix.isEmpty()) {
+    return uuid;
+  }
+  return QStringLiteral("%1%2").arg(prefix, uuid);
 }
 
 void MainWindow::requestDeferredStatusRefresh() {

@@ -60,7 +60,6 @@ bool MqttPahoClient::publishLoggerStop(const QString& id) {
   QJsonObject obj;
   obj["id"] = id;
   obj["type"] = "logger.stop";
-  obj["ts"] = QDateTime::currentSecsSinceEpoch();
   const QString logLine = QString("TX logger.stop id=%1").arg(id);
   return publishCommandPayload(obj, logLine);
 }
@@ -223,6 +222,40 @@ bool loadFromJsonFile(const QString& path, MqttGuiConfig& outConfig, QString& ou
   return true;
 }
 
+bool MqttPahoClient::parseEkinoxStatusJson(const QByteArray& payload, EkinoxStatus& out, QString& err) {
+  err.clear();
+  QJsonParseError parseErr{};
+  const auto doc = QJsonDocument::fromJson(payload, &parseErr);
+  if (parseErr.error != QJsonParseError::NoError) {
+    err = parseErr.errorString();
+    return false;
+  }
+  if (!doc.isObject()) {
+    err = QStringLiteral("root is not an object");
+    return false;
+  }
+
+  const auto obj = doc.object();
+  out.state = obj.value("state").toString();
+  out.mode = obj.value("mode").toString(out.state);
+  out.link_alive = obj.value("link_alive").toBool(obj.value("linkAlive").toBool(false));
+  if (obj.contains("recording_active")) {
+    out.recording_active = obj.value("recording_active").toBool();
+  } else if (obj.contains("recording")) {
+    out.recording_active = obj.value("recording").toBool();
+  }
+  const QJsonValue sessionField = obj.contains("session_name") ? obj.value("session_name") : obj.value("sessionName");
+  out.session_name = sessionField.isString() ? sessionField.toString() : QString();
+  out.last_error = obj.value("last_error").toString();
+  const auto tsVal = obj.value("ts");
+  if (tsVal.isDouble()) {
+    out.ts = static_cast<qint64>(tsVal.toDouble());
+  } else {
+    out.ts = QDateTime::currentSecsSinceEpoch();
+  }
+  return true;
+}
+
 void MqttPahoClient::setState(MqttConnectionState state) {
   const auto prev = state_.exchange(state);
   if (prev == state) return;
@@ -248,6 +281,20 @@ void MqttPahoClient::emitAckEvent(const QString& type, const QString& id, bool o
   QMetaObject::invokeMethod(
       this,
       [this, type, id, ok]() { emit ackReceived(type, id, ok); },
+      Qt::QueuedConnection);
+}
+
+void MqttPahoClient::emitEkinoxPresence(bool online) {
+  QMetaObject::invokeMethod(
+      this,
+      [this, online]() { emit ekinoxPresenceChanged(online); },
+      Qt::QueuedConnection);
+}
+
+void MqttPahoClient::emitEkinoxStatus(const EkinoxStatus& st) {
+  QMetaObject::invokeMethod(
+      this,
+      [this, st]() { emit ekinoxStatusChanged(st); },
       Qt::QueuedConnection);
 }
 
@@ -389,7 +436,41 @@ void MqttPahoClient::workerLoop() {
       client_->subscribe(tStatus().toStdString(), 1)->wait();
       client_->subscribe(tHeartbeat().toStdString(), 0)->wait();
       client_->subscribe(tAck().toStdString(), 1)->wait();
-      emitLog(QString("[%1] subscribed presence/status/heartbeat/ack").arg(nowStr()));
+      client_->subscribe(tEkinoxPresence().toStdString(), 1)->wait();
+      client_->subscribe(tEkinoxStatus().toStdString(), 1)->wait();
+      client_->subscribe(tEkinoxHeartbeat().toStdString(), 0)->wait();
+      client_->subscribe(tEkinoxAck().toStdString(), 1)->wait();
+      emitLog(QString("[%1] subscribed presence/status/heartbeat/ack + ekinox topics").arg(nowStr()));
+
+      const QString topicDump = QString(
+                                      "MQTT topics:\n"
+                                      "  server_uri=%1\n"
+                                      "  client_id=%2\n"
+                                      "  drone_id=%3\n"
+                                      "  prefix=%4\n"
+                                      "  presence=%5\n"
+                                      "  status=%6\n"
+                                      "  heartbeat=%7\n"
+                                      "  cmd=%8\n"
+                                      "  ack=%9\n"
+                                      "  ekinox/presence=%10\n"
+                                      "  ekinox/status=%11\n"
+                                      "  ekinox/heartbeat=%12\n"
+                                      "  ekinox/ack=%13")
+                                  .arg(QString::fromStdString(serverURI))
+                                  .arg(QString::fromStdString(clientId))
+                                  .arg(cfg.droneId)
+                                  .arg(topicPrefix())
+                                  .arg(tPresence())
+                                  .arg(tStatus())
+                                  .arg(tHeartbeat())
+                                  .arg(tCmd())
+                                  .arg(tAck())
+                                  .arg(tEkinoxPresence())
+                                  .arg(tEkinoxStatus())
+                                  .arg(tEkinoxHeartbeat())
+                                  .arg(tEkinoxAck());
+      emitLog(QString("[%1] %2").arg(nowStr(), topicDump));
 
       client_->start_consuming();
       backoffMs = 1000;
@@ -407,6 +488,58 @@ void MqttPahoClient::workerLoop() {
         const QString payload = QString::fromStdString(msg->to_string());
 
         emitLog(QString("[%1] <- %2 %3").arg(nowStr(), topic, payload));
+
+        auto handleAckMessage = [&](const QString& ackTopic) {
+          QJsonParseError ackErr{};
+          const auto doc = QJsonDocument::fromJson(payload.toUtf8(), &ackErr);
+          if (ackErr.error != QJsonParseError::NoError || !doc.isObject()) {
+            emitLog(QString("[%1] [%2] BAD_JSON: %3").arg(nowStr(), ackTopic, ackErr.errorString()));
+            return;
+          }
+
+          const auto ackObj = doc.object();
+          const QString ackId = ackObj.value("id").toString();
+          const bool ok = ackObj.value("ok").toBool(false);
+          const QString message = ackObj.value("message").toString();
+          const QString errText = ackObj.value("err").toString(ackObj.value("error").toString());
+          const QString ackType = ackObj.value("type").toString();
+          const int httpCode = ackObj.value("http_code").toInt(-1);
+
+          if (ackId.isEmpty()) {
+            emitLog(QString("[%1] [%2] missing id").arg(nowStr(), ackTopic));
+            return;
+          }
+
+          qint64 sentMs = 0;
+          bool matchedPing = false;
+          {
+            std::lock_guard<std::mutex> lk(pendingMutex_);
+            auto it = pendingPings_.find(ackId);
+            if (it != pendingPings_.end()) {
+              sentMs = it.value();
+              pendingPings_.erase(it);
+              matchedPing = true;
+            }
+          }
+
+          if (matchedPing) {
+            const qint64 rtt = std::max<qint64>(0, nowMs() - sentMs);
+            emitLog(QString("[%1] pong id=%2 (%3 ms)").arg(nowStr(), ackId).arg(rtt));
+            emitPingUpdate(ackId, rtt, false);
+            emitAckEvent(ackType.isEmpty() ? QStringLiteral("ping") : ackType, ackId, ok);
+            return;
+          }
+
+          emitLog(QString("[%1] RX ack type=%2 id=%3 ok=%4 http=%5 msg='%6' err='%7'")
+                      .arg(nowStr())
+                      .arg(ackType.isEmpty() ? QStringLiteral("-") : ackType)
+                      .arg(ackId)
+                      .arg(ok ? QStringLiteral("1") : QStringLiteral("0"))
+                      .arg(httpCode)
+                      .arg(message.isEmpty() ? QStringLiteral("-") : message)
+                      .arg(errText.isEmpty() ? QStringLiteral("-") : errText));
+          emitAckEvent(ackType, ackId, ok);
+        };
 
         if (topic == tPresence()) {
           QJsonParseError err{};
@@ -432,55 +565,34 @@ void MqttPahoClient::workerLoop() {
         } else if (topic == tHeartbeat()) {
           emitHeartbeat();
         } else if (topic == tAck()) {
-          QJsonParseError ackErr{};
-          const auto doc = QJsonDocument::fromJson(payload.toUtf8(), &ackErr);
-          if (ackErr.error != QJsonParseError::NoError || !doc.isObject()) {
-            emitLog(QString("[%1] [ack] BAD_JSON: %2").arg(nowStr(), ackErr.errorString()));
-            continue;
+          handleAckMessage(QStringLiteral("ack"));
+        } else if (topic == tEkinoxPresence()) {
+          QJsonParseError err{};
+          const auto doc = QJsonDocument::fromJson(payload.toUtf8(), &err);
+          if (err.error == QJsonParseError::NoError && doc.isObject()) {
+            const auto obj = doc.object();
+            const auto state = obj.value("state").toString();
+            const bool online = (state == QStringLiteral("online"));
+            emitEkinoxPresence(online);
+          } else {
+            emitLog(QString("[%1] [ekinox/presence] BAD_JSON: %2").arg(nowStr(), err.errorString()));
           }
-
-          const auto ackObj = doc.object();
-          const QString ackId = ackObj.value("id").toString();
-          const bool ok = ackObj.value("ok").toBool(false);
-          const QString message = ackObj.value("message").toString();
-          const QString errText = ackObj.value("err").toString(ackObj.value("error").toString());
-          const QString ackType = ackObj.value("type").toString();
-          const int httpCode = ackObj.value("http_code").toInt(-1);
-
-          if (ackId.isEmpty()) {
-            emitLog(QString("[%1] [ack] missing id").arg(nowStr()));
-            continue;
+        } else if (topic == tEkinoxStatus()) {
+          EkinoxStatus ekinox;
+          QString statusErr;
+          if (parseEkinoxStatusJson(payload.toUtf8(), ekinox, statusErr)) {
+            emitLog(QString("[%1] <- ekinox/status mode=%2 recording=%3 session='%4'")
+                        .arg(nowStr(), ekinox.mode.isEmpty() ? QStringLiteral("?") : ekinox.mode)
+                        .arg(ekinox.recording_active ? QStringLiteral("1") : QStringLiteral("0"))
+                        .arg(ekinox.session_name.isEmpty() ? QStringLiteral("-") : ekinox.session_name));
+            emitEkinoxStatus(ekinox);
+          } else {
+            emitLog(QString("[%1] [ekinox/status] BAD_JSON: %2").arg(nowStr(), statusErr));
           }
-
-          qint64 sentMs = 0;
-          bool matchedPing = false;
-          {
-            std::lock_guard<std::mutex> lk(pendingMutex_);
-            auto it = pendingPings_.find(ackId);
-            if (it != pendingPings_.end()) {
-              sentMs = it.value();
-              pendingPings_.erase(it);
-              matchedPing = true;
-            }
-          }
-
-          if (matchedPing) {
-            const qint64 rtt = std::max<qint64>(0, nowMs() - sentMs);
-            emitLog(QString("[%1] pong id=%2 (%3 ms)").arg(nowStr(), ackId).arg(rtt));
-            emitPingUpdate(ackId, rtt, false);
-            emitAckEvent(ackType.isEmpty() ? QStringLiteral("ping") : ackType, ackId, ok);
-            continue;
-          }
-
-          emitLog(QString("[%1] RX ack type=%2 id=%3 ok=%4 http=%5 msg='%6' err='%7'")
-                      .arg(nowStr())
-                      .arg(ackType.isEmpty() ? QStringLiteral("-") : ackType)
-                      .arg(ackId)
-                      .arg(ok ? QStringLiteral("1") : QStringLiteral("0"))
-                      .arg(httpCode)
-                      .arg(message.isEmpty() ? QStringLiteral("-") : message)
-                      .arg(errText.isEmpty() ? QStringLiteral("-") : errText));
-          emitAckEvent(ackType, ackId, ok);
+        } else if (topic == tEkinoxHeartbeat()) {
+          emitLog(QString("[%1] <- ekinox heartbeat").arg(nowStr()));
+        } else if (topic == tEkinoxAck()) {
+          handleAckMessage(QStringLiteral("ekinox/ack"));
         }
       }
 

@@ -37,6 +37,7 @@ private:
   QString generateSessionName() const;
   QString makeLoggerCmdId(const QString& prefix);
   void requestDeferredStatusRefresh();
+  void logUiState(const QString& tag);
 
 private slots:
   void onConnectClicked();
@@ -54,6 +55,8 @@ private slots:
   void onStatusChanged(const BackendStatus& st);
   void onPingUpdated(const QString& id, qint64 rttMs, bool timeout);
   void onAckReceived(const QString& type, const QString& id, bool ok);
+  void onEkinoxPresenceChanged(bool online);
+  void onEkinoxStatusChanged(const EkinoxStatus& st);
 
 private:
   Ui::MainWindow* ui;
@@ -66,6 +69,12 @@ private:
   qint64 lastHeartbeatMs_ = 0;
   BackendStatus lastStatus_{};
   bool hasStatus_ = false;
-  quint64 loggerCmdSeq_ = 0;
+  EkinoxStatus lastEkinoxStatus_{};
+  bool hasEkinoxStatus_ = false;
+  bool ekinoxPresenceOnline_ = false;
+  bool loggerControlsInitialized_ = false;
+  bool lastStartEnabled_ = false;
+  bool lastStopEnabled_ = false;
+  bool lastRecordingActive_ = false;
   static constexpr int kHeartbeatTimeoutMs = 3000;
 };
