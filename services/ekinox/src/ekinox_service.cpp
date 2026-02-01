@@ -180,7 +180,7 @@ void EkinoxService::connection_lost(const std::string& cause) {
 void EkinoxService::message_arrived(mqtt::const_message_ptr msg) {
 	const auto topic = msg->get_topic();
 	const auto payload = msg->get_payload_str();
-	std::cout << "[ekinox] RX mqtt topic=" << topic << " payload=" << payload << '\n';
+	std::cout << "[mqtt] RX topic=" << topic << " payload=" << payload << '\n';
 	std::lock_guard<std::mutex> lock(commands_mutex_);
 	pending_commands_.push(CommandMessage{topic, payload});
 }
@@ -200,7 +200,11 @@ bool EkinoxService::connect_once() {
 			std::cout << "[ekinox] SUBSCRIBED topic=" << topic << " qos=1 rc=" << rc << '\n';
 		};
 		subscribe_and_log(topics_.cmd);
+		std::cout << "[mqtt] subscribed cmd=" << topics_.cmd << " ack=" << topics_.ack << '\n';
 		subscribe_and_log(topics_.cmd_legacy);
+		if (!topics_.cmd_legacy.empty()) {
+			std::cout << "[mqtt] subscribed cmd_legacy=" << topics_.cmd_legacy << '\n';
+		}
 		std::cout << "[ekinox] MQTT topics:\n"
 			<< "  server_uri=" << server_uri_ << '\n'
 			<< "  drone_id=" << config_.mqtt.drone_id << '\n'
@@ -320,18 +324,24 @@ void EkinoxService::publish_ack(const std::string& type,
 	ack["type"] = type;
 	ack["id"] = id;
 	ack["ok"] = ok;
-	ack["message"] = message;
-	ack["err"] = err;
-	ack["http_code"] = http_code;
 	ack["ts"] = static_cast<Json::Int64>(unix_ts());
+	if (!message.empty()) {
+		ack["message"] = message;
+	}
+	if (!err.empty()) {
+		ack["error"] = err;
+	}
+	if (http_code > 0) {
+		ack["http_code"] = http_code;
+	}
 	const auto payload = serialize_json(ack);
-	auto publish_topic = [this, &payload](const std::string& topic) {
+	auto publish_topic = [this, &payload, &type, &id, ok](const std::string& topic) {
 		if (topic.empty()) {
 			return;
 		}
 		int rc = -1;
 		if (!connected_) {
-			std::cerr << "[ekinox] TX ack error topic=" << topic << " reason=offline" << '\n';
+			std::cerr << "[mqtt] TX ack error topic=" << topic << " reason=offline" << '\n';
 		} else {
 			auto msg = mqtt::make_message(topic, payload);
 			msg->set_qos(1);
@@ -340,24 +350,20 @@ void EkinoxService::publish_ack(const std::string& type,
 				auto token = client_.publish(msg);
 				rc = wait_for_token_rc(token);
 			} catch (const mqtt::exception& ex) {
-				std::cerr << "[ekinox] TX ack error topic=" << topic << " what=" << ex.what() << '\n';
+				std::cerr << "[mqtt] TX ack error topic=" << topic << " what=" << ex.what() << '\n';
 			}
 		}
-		std::cout << "[ekinox] TX ack topic=" << topic
-			<< " payload=" << payload
-			<< " qos=1 retained=0 rc=" << rc << '\n';
+		std::cout << "[mqtt] TX ack topic=" << topic
+			<< " type=" << (type.empty() ? "-" : type)
+			<< " id=" << (id.empty() ? "-" : id)
+			<< " ok=" << (ok ? "1" : "0")
+			<< " rc=" << rc
+			<< '\n';
 	};
 	publish_topic(topics_.ack);
 	if (!topics_.ack_legacy.empty() && topics_.ack_legacy != topics_.ack) {
 		publish_topic(topics_.ack_legacy);
 	}
-	std::cout << "[ekinox] TX ack type=" << (type.empty() ? "-" : type)
-		<< " id=" << (id.empty() ? "-" : id)
-		<< " ok=" << (ok ? "true" : "false")
-		<< " http=" << http_code
-		<< " err=" << (err.empty() ? "-" : err)
-		<< " message=" << (message.empty() ? "-" : message)
-		<< '\n';
 }
 
 void EkinoxService::drain_commands() {
