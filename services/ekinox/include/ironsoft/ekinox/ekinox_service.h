@@ -49,9 +49,9 @@ private:
 		const std::string& err);
 	void drain_commands();
 	void handle_command_message(const std::string& topic, const std::string& payload);
-	void handle_logger_start(const std::string& id, const std::string& type);
-	void handle_logger_stop(const std::string& id, const std::string& type);
-	void handle_logger_status(const std::string& id, const std::string& type);
+	void handle_logger_start(const std::string& id, const std::string& type, const Json::Value& cmd);
+	void handle_logger_stop(const std::string& id, const std::string& type, const Json::Value& cmd);
+	void handle_logger_status(const std::string& id, const std::string& type, const Json::Value& cmd);
 	void handle_ping(const std::string& id, const std::string& type);
 	void ensure_sensor_session(time_point now);
 	void poll_sensor(time_point now);
@@ -64,6 +64,13 @@ private:
 		const std::string& err,
 		int http_code);
 	bool can_execute_logger_cmd(std::string& err) const;
+	bool validate_rest_endpoint(std::string& err) const;
+	void mark_rest_result(const LoggerResult& result, const std::string& context_reason);
+	void update_link_health(const std::string& reason);
+	void refresh_rest_health(time_point now);
+	void set_udp_link_alive(bool alive, const std::string& reason);
+	std::string generate_session_name() const;
+	std::string extract_session_name(const Json::Value& cmd) const;
 	void set_state(ServiceState state);
 	void set_error(const std::string& message);
 	std::string serialize_json(const Json::Value& value) const;
@@ -72,6 +79,7 @@ private:
 
 private:
 	static constexpr int kRxTimeoutStrikesToReconnect = 5;
+	static constexpr std::chrono::seconds kRestAliveTtl{3};
 
 	EkinoxConfig config_;
 	EkinoxTopics topics_;
@@ -97,6 +105,10 @@ private:
 	bool presence_online_ = false;
 	bool sensor_connected_ = false;
 	int rx_timeout_strikes_ = 0;
+	bool udp_link_alive_ = false;
+	bool rest_alive_ = false;
+	time_point last_rest_success_{};
+	std::string last_rest_error_;
 	std::int64_t heartbeat_seq_ = 0;
 	time_point start_tp_{};
 	time_point next_status_pub_{};

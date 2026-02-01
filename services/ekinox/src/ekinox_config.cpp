@@ -146,7 +146,7 @@ bool loadEkinoxConfig(const std::string& path, EkinoxConfig& cfg, std::string& e
 	}
 
 	if (const Json::Value& rest = ekinox["rest_port"]; !rest.isNull()) {
-		if (!validate_port(rest, "ekinox.rest_port", true, err, cfg.ekinox.rest_port)) {
+		if (!validate_port(rest, "ekinox.rest_port", false, err, cfg.ekinox.rest_port)) {
 			return false;
 		}
 	}
@@ -178,27 +178,19 @@ bool loadEkinoxConfig(const std::string& path, EkinoxConfig& cfg, std::string& e
 	}
 
 	const Json::Value& rest_api = root["rest_api"];
-	if (!rest_api.isObject()) {
-		err = "missing rest_api";
+	if (!rest_api.isNull() && !rest_api.isObject()) {
+		err = "rest_api must be object";
 		return false;
 	}
-	auto read_path = [&](const char* field, std::string& target) -> bool {
-		const Json::Value& value = rest_api[field];
-		if (!value.isString() || value.asString().empty()) {
-			err = std::string{"missing rest_api."} + field;
-			return false;
+	if (rest_api.isObject()) {
+		const Json::Value& base_path = rest_api["base_path"];
+		if (base_path.isString() && !base_path.asString().empty()) {
+			cfg.rest_api.base_path = base_path.asString();
 		}
-		target = value.asString();
-		return true;
-	};
-	if (!read_path("start_path", cfg.rest_api.start_path)) {
-		return false;
-	}
-	if (!read_path("stop_path", cfg.rest_api.stop_path)) {
-		return false;
-	}
-	if (!read_path("status_path", cfg.rest_api.status_path)) {
-		return false;
+		const Json::Value& datalogger_path = rest_api["datalogger_path"];
+		if (datalogger_path.isString() && !datalogger_path.asString().empty()) {
+			cfg.rest_api.datalogger_path = datalogger_path.asString();
+		}
 	}
 
 	return true;

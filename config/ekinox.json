@@ -10,7 +10,7 @@
     "ip": "192.168.100.2",
     "udp_port": 0,
     "udp_local_port": 0,
-    "rest_port": 0
+    "rest_port": 80
   },
   "timeouts": {
     "rx_dead_ms": 1500,
@@ -20,8 +20,7 @@
     "reconnect_backoff_max_ms": 2000
   },
   "rest_api": {
-    "start_path": "/api/logger/start",
-    "stop_path": "/api/logger/stop",
-    "status_path": "/api/logger/status"
+    "base_path": "/api/v1",
+    "datalogger_path": "/dataLogger"
   }
 }

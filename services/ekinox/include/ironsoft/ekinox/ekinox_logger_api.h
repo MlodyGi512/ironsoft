@@ -14,17 +14,17 @@ struct LoggerResult {
 	std::string message;
 	std::string error_string;
 	std::string body;
+	bool has_recording_flag = false;
+	bool recording_active = false;
+	std::string session_name;
 };
 
 class EkinoxLoggerApi {
 public:
-	static LoggerResult start_http(const EkinoxConfig& config, const RestApiConfig& api);
-	static LoggerResult stop_http(const EkinoxConfig& config, const RestApiConfig& api);
-	static LoggerResult status_http(
-		const EkinoxConfig& config,
-		const RestApiConfig& api,
-		std::uint32_t& out_status,
-		bool& out_recording_active);
+	static LoggerResult get_datalogger_info(const EkinoxConfig& config, const RestApiConfig& api);
+	static LoggerResult get_datalogger_status(const EkinoxConfig& config, const RestApiConfig& api);
+	static LoggerResult start_datalogger(const EkinoxConfig& config, const RestApiConfig& api, const std::string& session_name);
+	static LoggerResult stop_datalogger(const EkinoxConfig& config, const RestApiConfig& api);
 };
 
 }  // namespace ironsoft::ekinox

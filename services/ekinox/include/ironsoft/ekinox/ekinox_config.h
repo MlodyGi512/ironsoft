@@ -21,13 +21,12 @@ struct EkinoxNetCfg {
 	std::string ip;
 	int udp_port = 0;
 	int udp_local_port = 0;
-	int rest_port = 0;
+	int rest_port = 80;
 };
 
 struct RestApiConfig {
-	std::string start_path;
-	std::string stop_path;
-	std::string status_path;
+	std::string base_path = "/api/v1";
+	std::string datalogger_path = "/dataLogger";
 };
 
 struct EkinoxTimeouts {
