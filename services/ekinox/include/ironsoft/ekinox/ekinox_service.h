@@ -58,6 +58,7 @@ private:
 	void set_error(const std::string& message);
 	std::string serialize_json(const Json::Value& value) const;
 	std::int64_t unix_ts() const;
+	int wait_for_token_rc(const mqtt::token_ptr& tok) const;
 
 private:
 	static constexpr std::uint32_t kLoggerRunningMask = 0x1u;

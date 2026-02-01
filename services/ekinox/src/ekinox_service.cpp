@@ -28,6 +28,17 @@ EkinoxService::EkinoxService(EkinoxConfig config)
       server_uri_("tcp://" + config_.mqtt.host + ":" + std::to_string(config_.mqtt.port)),
       client_id_(make_client_id()),
       client_(server_uri_, client_id_) {
+	std::cout << "[ekinox] TOPIC cmd=" << topics_.cmd << '\n';
+	if (!topics_.cmd_legacy.empty()) {
+		std::cout << "[ekinox] TOPIC cmd_legacy=" << topics_.cmd_legacy << '\n';
+	}
+	std::cout << "[ekinox] TOPIC ack=" << topics_.ack << '\n';
+	if (!topics_.ack_legacy.empty()) {
+		std::cout << "[ekinox] TOPIC ack_legacy=" << topics_.ack_legacy << '\n';
+	}
+	std::cout << "[ekinox] TOPIC ekinox/status=" << topics_.status << '\n';
+	std::cout << "[ekinox] TOPIC ekinox/presence=" << topics_.presence << '\n';
+	std::cout << "[ekinox] TOPIC ekinox/heartbeat=" << topics_.heartbeat << '\n';
 	client_.set_callback(*this);
 
 	conn_opts_.set_clean_session(true);
@@ -133,7 +144,7 @@ void EkinoxService::connection_lost(const std::string& cause) {
 void EkinoxService::message_arrived(mqtt::const_message_ptr msg) {
 	const auto topic = msg->get_topic();
 	const auto payload = msg->get_payload_str();
-	std::cout << "[ekinox] RX cmd topic=" << topic << " payload=" << payload << '\n';
+	std::cout << "[ekinox] RX mqtt topic=" << topic << " payload=" << payload << '\n';
 	std::lock_guard<std::mutex> lock(commands_mutex_);
 	pending_commands_.push(payload);
 }
@@ -143,7 +154,16 @@ bool EkinoxService::connect_once() {
 		set_state(ServiceState::kConnecting);
 		std::cout << "[ekinox] Connecting to " << server_uri_ << '\n';
 		client_.connect(conn_opts_)->wait();
-		client_.subscribe(topics_.cmd, 1)->wait();
+		auto subscribe_and_log = [this](const std::string& topic, const char* label) {
+			if (topic.empty()) {
+				return;
+			}
+			auto token = client_.subscribe(topic, 1);
+			const int rc = wait_for_token_rc(token);
+			std::cout << "[ekinox] SUBSCRIBED " << label << " topic=" << topic << " qos=1 rc=" << rc << '\n';
+		};
+		subscribe_and_log(topics_.cmd, "cmd");
+		subscribe_and_log(topics_.cmd_legacy, "cmd_legacy");
 		connected_ = true;
 		presence_online_ = false;
 		status_.link_alive = false;
@@ -247,17 +267,29 @@ void EkinoxService::publish_ack(const std::string& type, const std::string& id, 
 	ack["err"] = err;
 	ack["ts"] = static_cast<Json::Int64>(unix_ts());
 	const auto payload = serialize_json(ack);
-	auto msg = mqtt::make_message(topics_.ack, payload);
-	msg->set_qos(1);
-	msg->set_retained(false);
-	if (connected_) {
-		try {
-			client_.publish(msg);
-		} catch (const mqtt::exception& ex) {
-			std::cerr << "[ekinox] publish ack failed: " << ex.what() << '\n';
+	auto publish_topic = [this, &payload](const std::string& topic) {
+		if (topic.empty()) {
+			return;
 		}
-	} else {
-		std::cerr << "[ekinox] dropping ack while offline" << '\n';
+		std::cout << "[ekinox] TX ack topic=" << topic << " payload=" << payload << " qos=1 retained=0" << '\n';
+		if (!connected_) {
+			std::cerr << "[ekinox] TX ack error topic=" << topic << " reason=offline" << '\n';
+			return;
+		}
+		auto msg = mqtt::make_message(topic, payload);
+		msg->set_qos(1);
+		msg->set_retained(false);
+		try {
+			auto token = client_.publish(msg);
+			const int rc = wait_for_token_rc(token);
+			std::cout << "[ekinox] TX ack result topic=" << topic << " rc=" << rc << '\n';
+		} catch (const mqtt::exception& ex) {
+			std::cerr << "[ekinox] TX ack error topic=" << topic << " what=" << ex.what() << '\n';
+		}
+	};
+	publish_topic(topics_.ack);
+	if (!topics_.ack_legacy.empty() && topics_.ack_legacy != topics_.ack) {
+		publish_topic(topics_.ack_legacy);
 	}
 	std::cout << "[ekinox] TX ack type=" << (type.empty() ? "-" : type)
 		<< " id=" << (id.empty() ? "-" : id)
@@ -603,6 +635,14 @@ std::string EkinoxService::serialize_json(const Json::Value& value) const {
 std::int64_t EkinoxService::unix_ts() const {
 	auto now = std::chrono::system_clock::now();
 	return std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+}
+
+int EkinoxService::wait_for_token_rc(const mqtt::token_ptr& tok) const {
+	if (!tok) {
+		return -1;
+	}
+	tok->wait();
+	return tok->get_return_code();
 }
 
 }  // namespace ironsoft::ekinox
