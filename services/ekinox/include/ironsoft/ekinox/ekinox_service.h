@@ -72,7 +72,7 @@ private:
 
 private:
 	static constexpr std::uint32_t kLoggerRunningMask = 0x1u;
-	static constexpr int kRxTimeoutStreakToReconnect = 5;
+	static constexpr int kRxTimeoutStrikesToReconnect = 5;
 
 	EkinoxConfig config_;
 	EkinoxTopics topics_;
@@ -97,7 +97,7 @@ private:
 	bool connected_ = false;
 	bool presence_online_ = false;
 	bool sensor_connected_ = false;
-	int rx_timeout_streak_ = 0;
+	int rx_timeout_strikes_ = 0;
 	std::int64_t heartbeat_seq_ = 0;
 	time_point start_tp_{};
 	time_point next_status_pub_{};
@@ -105,6 +105,7 @@ private:
 	int current_backoff_ms_ = 0;
 	bool reported_no_sbg_ = false;
 	EkinoxUdpSession::Config udp_config_{};
+	std::int64_t last_presence_ts_ = 0;
 	std::unique_ptr<EkinoxUdpSession> udp_session_;
 };
 

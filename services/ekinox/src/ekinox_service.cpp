@@ -220,6 +220,7 @@ void EkinoxService::publish_presence(bool online, const std::string& reason) {
 		presence_.online = online;
 		presence_.reason = reason;
 		presence_.timestamp = unix_ts();
+		last_presence_ts_ = presence_.timestamp;
 		presence_online_ = online;
 		return;
 	}
@@ -229,6 +230,7 @@ void EkinoxService::publish_presence(bool online, const std::string& reason) {
 	presence_.online = online;
 	presence_.reason = reason;
 	presence_.timestamp = unix_ts();
+	last_presence_ts_ = presence_.timestamp;
 	Json::Value payload = build_presence_json(presence_);
 	auto msg = mqtt::make_message(topics_.presence, serialize_json(payload));
 	msg->set_qos(1);
@@ -597,32 +599,31 @@ void EkinoxService::poll_sensor(time_point now) {
 	}
 	std::string err;
 	if (!udp_session_->poll(err)) {
-		rx_timeout_streak_ = 0;
+		rx_timeout_strikes_ = 0;
 		handle_sensor_error(err);
 		return;
 	}
 	const auto age = udp_session_->last_rx_age_ms(now);
 	const auto rx_dead_ms = static_cast<std::int64_t>(config_.timeouts.rx_dead_ms);
 	if (age > rx_dead_ms) {
-		++rx_timeout_streak_;
-		if (rx_timeout_streak_ == 1) {
-			std::cout << "[ekinox] sensor rx timeout detected" << '\n';
+		++rx_timeout_strikes_;
+		if (rx_timeout_strikes_ == 1) {
+			std::cout << "[ekinox] sensor rx timeout detected (age=" << age << "ms)" << '\n';
+			set_error("rx timeout");
 		}
 		status_.link_alive = false;
 		status_.api_ok = false;
-		if (presence_online_) {
-			publish_presence(false, "rx timeout");
-		}
-		if (rx_timeout_streak_ >= kRxTimeoutStreakToReconnect) {
-			std::cout << "[ekinox] sensor rx timeout streak=" << rx_timeout_streak_ << " reconnecting" << '\n';
+		const bool recording = (status_.state == ServiceState::kRecording) || status_.recording_active;
+		if (recording && rx_timeout_strikes_ >= kRxTimeoutStrikesToReconnect) {
+			std::cout << "[ekinox] sensor rx timeout strikes=" << rx_timeout_strikes_ << " reconnecting (recording)" << '\n';
 			handle_sensor_disconnect("rx timeout");
 		}
 		return;
 	}
-	if (rx_timeout_streak_ > 0) {
-		std::cout << "[ekinox] sensor rx timeout cleared after streak=" << rx_timeout_streak_ << '\n';
+	if (rx_timeout_strikes_ > 0) {
+		std::cout << "[ekinox] sensor rx timeout cleared after strikes=" << rx_timeout_strikes_ << '\n';
 	}
-	rx_timeout_streak_ = 0;
+	rx_timeout_strikes_ = 0;
 	status_.link_alive = true;
 	status_.api_ok = true;
 	if (!presence_online_) {
@@ -636,7 +637,7 @@ void EkinoxService::handle_sensor_error(const std::string& reason) {
 }
 
 void EkinoxService::handle_sensor_disconnect(const std::string& reason) {
-	rx_timeout_streak_ = 0;
+	rx_timeout_strikes_ = 0;
 	if (udp_session_) {
 		udp_session_->close();
 	}
