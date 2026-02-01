@@ -4,7 +4,30 @@ project(ironsoft_ekinox LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(SBG_ECOM_ROOT "" CACHE PATH "Path to the sbgECom SDK root (Linux only)")
+set(SBG_ECOM_ROOT "" CACHE PATH "Path to sbgECom repo root")
+
+if(NOT SBG_ECOM_ROOT)
+    set(_sbg_candidates "/home/ironsoft/sbgECom")
+    if(DEFINED ENV{HOME} AND NOT "$ENV{HOME}" STREQUAL "")
+        list(APPEND _sbg_candidates "$ENV{HOME}/sbgECom")
+    endif()
+    list(APPEND _sbg_candidates
+        "${CMAKE_SOURCE_DIR}/../sbgECom"
+        "${CMAKE_SOURCE_DIR}/../../sbgECom"
+    )
+
+    foreach(_sbg_candidate IN LISTS _sbg_candidates)
+        if(NOT _sbg_candidate)
+            continue()
+        endif()
+        if(EXISTS "${_sbg_candidate}")
+            get_filename_component(_sbg_real "${_sbg_candidate}" REALPATH)
+            set(SBG_ECOM_ROOT "${_sbg_real}" CACHE PATH "Path to sbgECom repo root" FORCE)
+            message(STATUS "Auto-detected sbgECom at ${SBG_ECOM_ROOT}")
+            break()
+        endif()
+    endforeach()
+endif()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(JSONCPP REQUIRED IMPORTED_TARGET jsoncpp)
@@ -17,10 +40,10 @@ set(EKINOX_SBG_TARGET "")
 
 if(UNIX)
     if(NOT SBG_ECOM_ROOT)
-        message(FATAL_ERROR "SBG_ECOM_ROOT not set. Configure with -DSBG_ECOM_ROOT=/home/ironsoft/sbgECom")
+        message(FATAL_ERROR "sbgECom repository not found. Clone it, e.g.\n  git clone https://github.com/SBG-Systems/sbgECom.git /home/ironsoft/sbgECom\nthen rerun: cmake -S services/ekinox -B build-ekinox -DSBG_ECOM_ROOT=/absolute/path/to/sbgECom")
     endif()
     if(NOT EXISTS "${SBG_ECOM_ROOT}")
-        message(FATAL_ERROR "SBG_ECOM_ROOT path does not exist: ${SBG_ECOM_ROOT}")
+        message(FATAL_ERROR "SBG_ECOM_ROOT path does not exist: ${SBG_ECOM_ROOT}.\nProvide a valid path via -DSBG_ECOM_ROOT=/absolute/path/to/sbgECom")
     endif()
 
     add_subdirectory(${SBG_ECOM_ROOT} ${CMAKE_BINARY_DIR}/_deps/sbgECom EXCLUDE_FROM_ALL)
@@ -99,3 +122,5 @@ if(EKINOX_HAS_SBG)
 endif()
 
 target_compile_definitions(ekinox_service PRIVATE DEKINOX_HAS_SBG=${EKINOX_HAS_SBG})
+
+message(STATUS "SBG_ECOM_ROOT=${SBG_ECOM_ROOT}")
