@@ -37,6 +37,8 @@ MainWindow::MainWindow(QWidget* parent)
   connect(ui->btnConnect, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
   connect(ui->btnPing, &QPushButton::clicked, this, &MainWindow::onPingClicked);
   connect(ui->btnBrowseConfig, &QPushButton::clicked, this, &MainWindow::onBrowseConfigClicked);
+  connect(ui->btnLoggerStart, &QPushButton::clicked, this, &MainWindow::onLoggerStartClicked);
+  connect(ui->btnLoggerStop, &QPushButton::clicked, this, &MainWindow::onLoggerStopClicked);
 
   connect(&mqtt_, &MqttPahoClient::logLine, this, &MainWindow::onLogLine);
   connect(&mqtt_, &MqttPahoClient::connectedChanged, this, &MainWindow::onConnectedChanged);
@@ -45,9 +47,11 @@ MainWindow::MainWindow(QWidget* parent)
   connect(&mqtt_, &MqttPahoClient::heartbeatReceived, this, &MainWindow::onHeartbeatReceived);
   connect(&mqtt_, &MqttPahoClient::statusChanged, this, &MainWindow::onStatusChanged);
   connect(&mqtt_, &MqttPahoClient::pingUpdated, this, &MainWindow::onPingUpdated);
+  connect(&mqtt_, &MqttPahoClient::ackReceived, this, &MainWindow::onAckReceived);
 
   updateUiForState(clientState_);
   ui->btnPing->setEnabled(false);
+  updateLoggerControls();
 
   heartbeatTimer_.setInterval(500);
   heartbeatTimer_.setSingleShot(false);
@@ -270,6 +274,7 @@ void MainWindow::onConnectedChanged(bool connected) {
     setPresenceLed(false);
   }
   updateBackendHealth();
+  updateLoggerControls();
 }
 
 void MainWindow::onPresenceChanged(bool online) {
@@ -288,6 +293,7 @@ void MainWindow::onClientStateChanged(MqttConnectionState state) {
     lastHeartbeatMs_ = 0;
   }
   updateBackendHealth();
+  updateLoggerControls();
 }
 
 void MainWindow::onHeartbeatReceived() {
@@ -303,10 +309,23 @@ void MainWindow::onStatusChanged(const BackendStatus& st) {
   setModeText(st.mode);
   setLedApi(st.api_ok);
   setLastError(st.last_error);
+  lastStatus_ = st;
+  hasStatus_ = true;
+  updateLoggerControls();
 }
 
 void MainWindow::onPingUpdated(const QString& /*id*/, qint64 rttMs, bool timeout) {
   setPingRttDisplay(rttMs, timeout);
+}
+
+void MainWindow::onAckReceived(const QString& type, const QString& id, bool ok) {
+  const QString prettyType = type.isEmpty() ? QStringLiteral("-") : type;
+  const QString line = tr("[ack] type=%1 id=%2 ok=%3").arg(prettyType, id.isEmpty() ? QStringLiteral("-") : id, ok ? QStringLiteral("1") : QStringLiteral("0"));
+  logUi(line);
+  if (prettyType == QStringLiteral("logger.stop") || prettyType == QStringLiteral("session.stop")) {
+    updateLoggerControls();
+    requestDeferredStatusRefresh();
+  }
 }
 
 void MainWindow::updateUiForState(MqttConnectionState state) {
@@ -332,6 +351,7 @@ void MainWindow::updateUiForState(MqttConnectionState state) {
       ui->btnConnect->setEnabled(false);
       break;
   }
+  updateLoggerControls();
 }
 
 void MainWindow::updateBackendHealth() {
@@ -346,4 +366,84 @@ void MainWindow::updateBackendHealth() {
     }
   }
   setBackendLed(next);
+}
+
+void MainWindow::updateLoggerControls() {
+  if (!ui) return;
+  const bool connected = (clientState_ == MqttConnectionState::Connected);
+  const bool recording = hasStatus_ && lastStatus_.recording_active;
+  ui->btnLoggerStart->setEnabled(connected && !recording);
+  ui->btnLoggerStop->setEnabled(connected && recording);
+
+  const QString indicator = recording ? tr("RECORDING") : tr("IDLE");
+  const QString indicatorStyle = recording
+      ? QStringLiteral("color:#1B5A2B;font-weight:bold;")
+      : QStringLiteral("color:#888888;font-weight:bold;");
+  ui->labelRecordingValue->setText(indicator);
+  ui->labelRecordingValue->setStyleSheet(indicatorStyle);
+
+  const QString sessionText = (hasStatus_ && !lastStatus_.session_name.isEmpty())
+      ? lastStatus_.session_name
+      : QStringLiteral("—");
+  ui->labelSessionValue->setText(sessionText);
+}
+
+void MainWindow::onLoggerStartClicked() {
+  if (clientState_ != MqttConnectionState::Connected) {
+    logUi(tr("[gui] cannot start session while disconnected"));
+    return;
+  }
+
+  const QString sessionName = desiredSessionName();
+  const QString id = makeLoggerCmdId(QStringLiteral("gui_start_"));
+  if (!mqtt_.publishLoggerStart(id, sessionName)) {
+    logUi(tr("[gui] failed to publish logger.start"));
+    return;
+  }
+
+  requestDeferredStatusRefresh();
+}
+
+void MainWindow::onLoggerStopClicked() {
+  if (clientState_ != MqttConnectionState::Connected) {
+    logUi(tr("[gui] cannot stop session while disconnected"));
+    return;
+  }
+
+  const QString id = makeLoggerCmdId(QStringLiteral("gui_stop_"));
+  if (!mqtt_.publishLoggerStop(id)) {
+    logUi(tr("[gui] failed to publish logger.stop"));
+    return;
+  }
+
+  requestDeferredStatusRefresh();
+}
+
+QString MainWindow::desiredSessionName() const {
+  if (!ui) return QStringLiteral("IronSoft_auto");
+  const QString userValue = ui->editSessionName->text().trimmed();
+  return userValue.isEmpty() ? generateSessionName() : userValue;
+}
+
+QString MainWindow::generateSessionName() const {
+  return QStringLiteral("IronSoft_%1")
+      .arg(QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd_HHmmss")));
+}
+
+QString MainWindow::makeLoggerCmdId(const QString& prefix) {
+  ++loggerCmdSeq_;
+  return QStringLiteral("%1%2").arg(prefix).arg(loggerCmdSeq_);
+}
+
+void MainWindow::requestDeferredStatusRefresh() {
+  QTimer::singleShot(1000, this, [this]() {
+    if (clientState_ != MqttConnectionState::Connected) {
+      logUi(tr("[gui] skipped logger.status (disconnected)"));
+      return;
+    }
+    const QString id = makeLoggerCmdId(QStringLiteral("gui_status_"));
+    if (!mqtt_.publishLoggerStatus(id)) {
+      logUi(tr("[gui] failed to publish logger.status"));
+    }
+  });
 }

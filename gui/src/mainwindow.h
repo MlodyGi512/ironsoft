@@ -32,11 +32,18 @@ private:
   void logUi(const QString& line);
   void updateUiForState(MqttConnectionState state);
   void updateBackendHealth();
+  void updateLoggerControls();
+  QString desiredSessionName() const;
+  QString generateSessionName() const;
+  QString makeLoggerCmdId(const QString& prefix);
+  void requestDeferredStatusRefresh();
 
 private slots:
   void onConnectClicked();
   void onPingClicked();
   void onBrowseConfigClicked();
+  void onLoggerStartClicked();
+  void onLoggerStopClicked();
 
   void onLogLine(const QString& line);
   void onConnectedChanged(bool connected);
@@ -46,6 +53,7 @@ private slots:
   void onHeartbeatTick();
   void onStatusChanged(const BackendStatus& st);
   void onPingUpdated(const QString& id, qint64 rttMs, bool timeout);
+  void onAckReceived(const QString& type, const QString& id, bool ok);
 
 private:
   Ui::MainWindow* ui;
@@ -56,5 +64,8 @@ private:
   QTimer heartbeatTimer_;
   bool presenceOnline_ = false;
   qint64 lastHeartbeatMs_ = 0;
+  BackendStatus lastStatus_{};
+  bool hasStatus_ = false;
+  quint64 loggerCmdSeq_ = 0;
   static constexpr int kHeartbeatTimeoutMs = 3000;
 };

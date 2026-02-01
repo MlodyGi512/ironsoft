@@ -450,6 +450,7 @@ void EkinoxService::handle_logger_start(const std::string& id, const std::string
 	if (session_name.empty()) {
 		session_name = generate_session_name();
 	}
+	status_.session_name = session_name;
 	set_state(ServiceState::kStarting);
 	publish_status();
 	LoggerResult start_result = EkinoxLoggerApi::dataLoggerStart(config_, config_.rest_api, session_name);
@@ -525,6 +526,9 @@ void EkinoxService::handle_logger_stop(const std::string& id, const std::string&
 	std::this_thread::sleep_for(kVerificationDelay);
 	LoggerResult verify_later = request_logger_state("logger.stop.verify.later");
 	const bool confirmed = logger_state_matches(verify_now, false) || logger_state_matches(verify_later, false);
+	if (confirmed) {
+		status_.session_name.clear();
+	}
 	publish_status();
 	if (confirmed) {
 		send_ack(id, type, true, "recording stopped", "", stop_http_code);
@@ -670,6 +674,11 @@ LoggerResult EkinoxService::request_logger_state(const std::string& context_reas
 			status_.recording_active = result.recording_active;
 			set_state(result.recording_active ? ServiceState::kRecording : ServiceState::kIdle);
 		}
+		if (!result.session_name.empty()) {
+			status_.session_name = result.session_name;
+		} else if (!status_.recording_active) {
+			status_.session_name.clear();
+		}
 		return result;
 	}
 	std::string err = rest_error_or_http(result);
@@ -681,6 +690,7 @@ LoggerResult EkinoxService::request_logger_state(const std::string& context_reas
 	}
 	if (result.http_code == 404) {
 		status_.recording_active = false;
+		status_.session_name.clear();
 		set_state(ServiceState::kIdle);
 	} else {
 		set_state(ServiceState::kError);

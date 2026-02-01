@@ -214,6 +214,58 @@
     </item>
 
     <item>
+     <widget class="QGroupBox" name="groupLogger">
+      <property name="title">
+       <string>Data logger</string>
+      </property>
+      <layout class="QGridLayout" name="gridLayoutLogger">
+       <item row="0" column="0">
+        <widget class="QLabel" name="labelRecordingTitle">
+         <property name="text"><string>Recording</string></property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <widget class="QLabel" name="labelRecordingValue">
+         <property name="objectName"><string>labelRecordingValue</string></property>
+         <property name="text"><string>IDLE</string></property>
+        </widget>
+       </item>
+       <item row="0" column="2">
+        <widget class="QLabel" name="labelSessionTitle">
+         <property name="text"><string>Session</string></property>
+        </widget>
+       </item>
+       <item row="0" column="3">
+        <widget class="QLabel" name="labelSessionValue">
+         <property name="text"><string>—</string></property>
+        </widget>
+       </item>
+       <item row="1" column="0">
+        <widget class="QLabel" name="labelSessionInput">
+         <property name="text"><string>New session</string></property>
+        </widget>
+       </item>
+       <item row="1" column="1" colspan="3">
+        <widget class="QLineEdit" name="editSessionName">
+         <property name="placeholderText"><string>Optional session name...</string></property>
+        </widget>
+       </item>
+       <item row="2" column="0">
+        <widget class="QPushButton" name="btnLoggerStart">
+         <property name="text"><string>Start session</string></property>
+        </widget>
+       </item>
+       <item row="2" column="1">
+        <widget class="QPushButton" name="btnLoggerStop">
+         <property name="text"><string>Stop session</string></property>
+         <property name="enabled"><bool>false</bool></property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+
+    <item>
      <widget class="QGroupBox" name="groupLog">
       <property name="title"><string>Log</string></property>
       <layout class="QVBoxLayout" name="verticalLayout_2">

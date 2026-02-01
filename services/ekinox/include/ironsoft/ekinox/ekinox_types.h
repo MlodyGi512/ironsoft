@@ -35,6 +35,9 @@ inline constexpr std::string_view kCmdPing{"ping"};
 inline constexpr std::string_view kCmdLoggerStart{"logger.start"};
 inline constexpr std::string_view kCmdLoggerStop{"logger.stop"};
 inline constexpr std::string_view kCmdLoggerStatus{"logger.status"};
+inline constexpr std::string_view kCmdSessionStart{"session.start"};
+inline constexpr std::string_view kCmdSessionStop{"session.stop"};
+inline constexpr std::string_view kCmdSessionStatus{"session.status"};
 
 inline constexpr std::string_view to_string(ServiceState state) noexcept {
 	switch (state) {
@@ -118,6 +121,18 @@ inline constexpr bool try_parse_command_type(std::string_view text, CommandType&
 		return true;
 	}
 	if (text == kCmdLoggerStatus) {
+		type = CommandType::kLoggerStatus;
+		return true;
+	}
+	if (text == kCmdSessionStart) {
+		type = CommandType::kLoggerStart;
+		return true;
+	}
+	if (text == kCmdSessionStop) {
+		type = CommandType::kLoggerStop;
+		return true;
+	}
+	if (text == kCmdSessionStatus) {
 		type = CommandType::kLoggerStatus;
 		return true;
 	}

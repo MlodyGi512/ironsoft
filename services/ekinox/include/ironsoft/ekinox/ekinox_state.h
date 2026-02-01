@@ -22,6 +22,7 @@ struct StatusPayload {
 	ServiceState state = ServiceState::kDisconnected;
 	std::string last_error;
 	std::int64_t last_error_ts = 0;
+	std::string session_name;
 };
 
 Json::Value build_presence_json(const PresencePayload& payload);

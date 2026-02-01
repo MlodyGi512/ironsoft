@@ -46,6 +46,34 @@ void MqttPahoClient::setConnected(bool v) {
   }
 }
 
+bool MqttPahoClient::publishLoggerStart(const QString& id, const QString& sessionName) {
+  QJsonObject obj;
+  obj["id"] = id;
+  obj["type"] = "logger.start";
+  obj["ts"] = QDateTime::currentSecsSinceEpoch();
+  obj["sessionName"] = sessionName;
+  const QString logLine = QString("TX logger.start id=%1 session=%2").arg(id, sessionName);
+  return publishCommandPayload(obj, logLine);
+}
+
+bool MqttPahoClient::publishLoggerStop(const QString& id) {
+  QJsonObject obj;
+  obj["id"] = id;
+  obj["type"] = "logger.stop";
+  obj["ts"] = QDateTime::currentSecsSinceEpoch();
+  const QString logLine = QString("TX logger.stop id=%1").arg(id);
+  return publishCommandPayload(obj, logLine);
+}
+
+bool MqttPahoClient::publishLoggerStatus(const QString& id) {
+  QJsonObject obj;
+  obj["id"] = id;
+  obj["type"] = "logger.status";
+  obj["ts"] = QDateTime::currentSecsSinceEpoch();
+  const QString logLine = QString("TX logger.status id=%1").arg(id);
+  return publishCommandPayload(obj, logLine);
+}
+
 void MqttPahoClient::setPresence(bool v) {
   const bool prev = presence_.exchange(v);
   if (prev != v) {
@@ -216,6 +244,13 @@ void MqttPahoClient::emitPingUpdate(const QString& id, qint64 rttMs, bool timeou
       Qt::QueuedConnection);
 }
 
+void MqttPahoClient::emitAckEvent(const QString& type, const QString& id, bool ok) {
+  QMetaObject::invokeMethod(
+      this,
+      [this, type, id, ok]() { emit ackReceived(type, id, ok); },
+      Qt::QueuedConnection);
+}
+
 void MqttPahoClient::handlePingTimeout(const QString& id) {
   bool removed = false;
   {
@@ -276,7 +311,45 @@ bool MqttPahoClient::parseStatusJson(const QByteArray& payload, BackendStatus& o
   if (tsVal.isDouble()) out.ts = static_cast<qint64>(tsVal.toDouble());
   else out.ts = QDateTime::currentSecsSinceEpoch();
 
+  if (obj.contains("recording_active")) {
+    const auto recVal = obj.value("recording_active");
+    if (recVal.isBool()) out.recording_active = recVal.toBool();
+  } else if (obj.contains("recording")) {
+    const auto recVal = obj.value("recording");
+    if (recVal.isBool()) out.recording_active = recVal.toBool();
+  }
+
+  const QJsonValue sessionField = obj.contains("session_name") ? obj.value("session_name") : obj.value("sessionName");
+  if (sessionField.isString()) {
+    out.session_name = sessionField.toString();
+  } else {
+    out.session_name.clear();
+  }
+
   return true;
+}
+
+bool MqttPahoClient::publishCommandPayload(const QJsonObject& obj, const QString& logLine) {
+  if (!client_ || !connected_.load()) {
+    emitLog(QString("[%1] can't publish %2: not connected")
+                .arg(nowStr(), obj.value("type").toString("cmd")));
+    return false;
+  }
+
+  const auto payload = QJsonDocument(obj).toJson(QJsonDocument::Compact);
+  try {
+    auto m = mqtt::make_message(tCmd().toStdString(),
+                                std::string(payload.constData(), payload.size()));
+    m->set_qos(1);
+    m->set_retained(false);
+    mqtt::const_message_ptr cm = m;
+    client_->publish(cm);
+    emitLog(QString("[%1] %2").arg(nowStr(), logLine));
+    return true;
+  } catch (const std::exception& e) {
+    emitLog(QString("[%1] publish error: %2").arg(nowStr(), e.what()));
+    return false;
+  }
 }
 
 void MqttPahoClient::workerLoop() {
@@ -370,7 +443,9 @@ void MqttPahoClient::workerLoop() {
           const QString ackId = ackObj.value("id").toString();
           const bool ok = ackObj.value("ok").toBool(false);
           const QString message = ackObj.value("message").toString();
-          const QString errText = ackObj.value("error").toString();
+          const QString errText = ackObj.value("err").toString(ackObj.value("error").toString());
+          const QString ackType = ackObj.value("type").toString();
+          const int httpCode = ackObj.value("http_code").toInt(-1);
 
           if (ackId.isEmpty()) {
             emitLog(QString("[%1] [ack] missing id").arg(nowStr()));
@@ -378,26 +453,34 @@ void MqttPahoClient::workerLoop() {
           }
 
           qint64 sentMs = 0;
+          bool matchedPing = false;
           {
             std::lock_guard<std::mutex> lk(pendingMutex_);
             auto it = pendingPings_.find(ackId);
             if (it != pendingPings_.end()) {
               sentMs = it.value();
               pendingPings_.erase(it);
+              matchedPing = true;
             }
           }
 
-          if (!sentMs) {
-            emitLog(QString("[%1] unsolicited ack id=%2 ok=%3 msg='%4' err='%5'")
-                        .arg(nowStr(), ackId)
-                        .arg(ok ? "1" : "0")
-                        .arg(message, errText));
+          if (matchedPing) {
+            const qint64 rtt = std::max<qint64>(0, nowMs() - sentMs);
+            emitLog(QString("[%1] pong id=%2 (%3 ms)").arg(nowStr(), ackId).arg(rtt));
+            emitPingUpdate(ackId, rtt, false);
+            emitAckEvent(ackType.isEmpty() ? QStringLiteral("ping") : ackType, ackId, ok);
             continue;
           }
 
-          const qint64 rtt = std::max<qint64>(0, nowMs() - sentMs);
-          emitLog(QString("[%1] pong id=%2 (%3 ms)").arg(nowStr(), ackId).arg(rtt));
-          emitPingUpdate(ackId, rtt, false);
+          emitLog(QString("[%1] RX ack type=%2 id=%3 ok=%4 http=%5 msg='%6' err='%7'")
+                      .arg(nowStr())
+                      .arg(ackType.isEmpty() ? QStringLiteral("-") : ackType)
+                      .arg(ackId)
+                      .arg(ok ? QStringLiteral("1") : QStringLiteral("0"))
+                      .arg(httpCode)
+                      .arg(message.isEmpty() ? QStringLiteral("-") : message)
+                      .arg(errText.isEmpty() ? QStringLiteral("-") : errText));
+          emitAckEvent(ackType, ackId, ok);
         }
       }
 

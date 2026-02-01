@@ -3,6 +3,7 @@
 #include <QMetaType>
 #include <QByteArray>
 #include <QHash>
+#include <QJsonObject>
 #include <QString>
 #include <atomic>
 #include <condition_variable>
@@ -33,6 +34,8 @@ struct BackendStatus {
   bool api_ok = false;
   QString last_error;
   qint64 ts = 0;
+  bool recording_active = false;
+  QString session_name;
 };
 Q_DECLARE_METATYPE(BackendStatus)
 
@@ -50,6 +53,9 @@ public:
   Q_INVOKABLE void disconnectFromBroker();
   Q_INVOKABLE void stop();
   Q_INVOKABLE void publishCmdPing();
+  Q_INVOKABLE bool publishLoggerStart(const QString& id, const QString& sessionName);
+  Q_INVOKABLE bool publishLoggerStop(const QString& id);
+  Q_INVOKABLE bool publishLoggerStatus(const QString& id);
 
 signals:
   void logLine(const QString& line);
@@ -59,6 +65,7 @@ signals:
   void heartbeatReceived();
   void statusChanged(const BackendStatus& st);
   void pingUpdated(const QString& id, qint64 rttMs, bool timeout);
+  void ackReceived(const QString& type, const QString& id, bool ok);
 
 private:
   QString topicPrefix() const;
@@ -75,8 +82,10 @@ private:
   void emitLog(const QString& line);
   void emitHeartbeat();
   void emitPingUpdate(const QString& id, qint64 rttMs, bool timeout);
+  void emitAckEvent(const QString& type, const QString& id, bool ok);
   void handlePingTimeout(const QString& id);
   bool parseStatusJson(const QByteArray& payload, BackendStatus& out, QString& err);
+  bool publishCommandPayload(const QJsonObject& obj, const QString& logLine);
 
 private:
   MqttGuiConfig cfg_;

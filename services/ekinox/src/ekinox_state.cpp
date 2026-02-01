@@ -22,6 +22,8 @@ Json::Value build_status_json(const StatusPayload& payload) {
 	root["mode"] = root["state"];
 	root["last_error"] = payload.last_error;
 	root["last_error_ts"] = static_cast<Json::Int64>(payload.last_error_ts);
+	root["session_name"] = payload.session_name;
+	root["sessionName"] = payload.session_name;
 	return root;
 }
 
