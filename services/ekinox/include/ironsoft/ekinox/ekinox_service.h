@@ -41,7 +41,12 @@ private:
 	void publish_presence(bool online, const std::string& reason);
 	void publish_status();
 	void publish_heartbeat(std::int64_t uptime_s);
-	void publish_ack(const std::string& type, const std::string& id, int http_code, const std::string& err);
+	void publish_ack(const std::string& type,
+		const std::string& id,
+		bool ok,
+		int http_code,
+		const std::string& message,
+		const std::string& err);
 	void drain_commands();
 	void handle_command_message(const std::string& payload);
 	void handle_logger_start(const std::string& id, const std::string& type);
@@ -52,7 +57,12 @@ private:
 	void poll_sensor(time_point now);
 	void handle_sensor_error(const std::string& reason);
 	void handle_sensor_disconnect(const std::string& reason);
-	void send_ack(const std::string& id, const std::string& type, bool ok, const std::string& message, const std::string& err, int http_code);
+	void send_ack(const std::string& id,
+		const std::string& type,
+		bool ok,
+		const std::string& message,
+		const std::string& err,
+		int http_code);
 	bool can_execute_logger_cmd(std::string& err) const;
 	void set_state(ServiceState state);
 	void set_error(const std::string& message);

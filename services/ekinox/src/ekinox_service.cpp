@@ -154,16 +154,17 @@ bool EkinoxService::connect_once() {
 		set_state(ServiceState::kConnecting);
 		std::cout << "[ekinox] Connecting to " << server_uri_ << '\n';
 		client_.connect(conn_opts_)->wait();
-		auto subscribe_and_log = [this](const std::string& topic, const char* label) {
+		auto subscribe_and_log = [this](const std::string& topic) {
 			if (topic.empty()) {
 				return;
 			}
+			std::cout << "[ekinox] SUBSCRIBING topic=" << topic << '\n';
 			auto token = client_.subscribe(topic, 1);
 			const int rc = wait_for_token_rc(token);
-			std::cout << "[ekinox] SUBSCRIBED " << label << " topic=" << topic << " qos=1 rc=" << rc << '\n';
+			std::cout << "[ekinox] SUBSCRIBED topic=" << topic << " qos=1 rc=" << rc << '\n';
 		};
-		subscribe_and_log(topics_.cmd, "cmd");
-		subscribe_and_log(topics_.cmd_legacy, "cmd_legacy");
+		subscribe_and_log(topics_.cmd);
+		subscribe_and_log(topics_.cmd_legacy);
 		connected_ = true;
 		presence_online_ = false;
 		status_.link_alive = false;
@@ -259,33 +260,42 @@ void EkinoxService::publish_heartbeat(std::int64_t uptime_s) {
 	client_.publish(msg);
 }
 
-void EkinoxService::publish_ack(const std::string& type, const std::string& id, int http_code, const std::string& err) {
+void EkinoxService::publish_ack(const std::string& type,
+	const std::string& id,
+	bool ok,
+	int http_code,
+	const std::string& message,
+	const std::string& err) {
 	Json::Value ack;
 	ack["type"] = type;
 	ack["id"] = id;
-	ack["http_code"] = http_code;
+	ack["ok"] = ok;
+	ack["message"] = message;
 	ack["err"] = err;
+	ack["http_code"] = http_code;
 	ack["ts"] = static_cast<Json::Int64>(unix_ts());
 	const auto payload = serialize_json(ack);
 	auto publish_topic = [this, &payload](const std::string& topic) {
 		if (topic.empty()) {
 			return;
 		}
-		std::cout << "[ekinox] TX ack topic=" << topic << " payload=" << payload << " qos=1 retained=0" << '\n';
+		int rc = -1;
 		if (!connected_) {
 			std::cerr << "[ekinox] TX ack error topic=" << topic << " reason=offline" << '\n';
-			return;
+		} else {
+			auto msg = mqtt::make_message(topic, payload);
+			msg->set_qos(1);
+			msg->set_retained(false);
+			try {
+				auto token = client_.publish(msg);
+				rc = wait_for_token_rc(token);
+			} catch (const mqtt::exception& ex) {
+				std::cerr << "[ekinox] TX ack error topic=" << topic << " what=" << ex.what() << '\n';
+			}
 		}
-		auto msg = mqtt::make_message(topic, payload);
-		msg->set_qos(1);
-		msg->set_retained(false);
-		try {
-			auto token = client_.publish(msg);
-			const int rc = wait_for_token_rc(token);
-			std::cout << "[ekinox] TX ack result topic=" << topic << " rc=" << rc << '\n';
-		} catch (const mqtt::exception& ex) {
-			std::cerr << "[ekinox] TX ack error topic=" << topic << " what=" << ex.what() << '\n';
-		}
+		std::cout << "[ekinox] TX ack topic=" << topic
+			<< " payload=" << payload
+			<< " qos=1 retained=0 rc=" << rc << '\n';
 	};
 	publish_topic(topics_.ack);
 	if (!topics_.ack_legacy.empty() && topics_.ack_legacy != topics_.ack) {
@@ -293,8 +303,10 @@ void EkinoxService::publish_ack(const std::string& type, const std::string& id, 
 	}
 	std::cout << "[ekinox] TX ack type=" << (type.empty() ? "-" : type)
 		<< " id=" << (id.empty() ? "-" : id)
+		<< " ok=" << (ok ? "true" : "false")
 		<< " http=" << http_code
 		<< " err=" << (err.empty() ? "-" : err)
+		<< " message=" << (message.empty() ? "-" : message)
 		<< '\n';
 }
 
@@ -323,12 +335,12 @@ void EkinoxService::handle_command_message(const std::string& payload) {
 	if (!reader->parse(payload.data(), payload.data() + payload.size(), &root, &errs)) {
 		std::cerr << "[ekinox] bad cmd json: " << errs << '\n';
 		log_rx_type("", "");
-		publish_ack("", "", 400, "bad_request: invalid json");
+		publish_ack("", "", false, 400, "", "bad_request");
 		return;
 	}
 	if (!root.isObject()) {
 		log_rx_type("", "");
-		publish_ack("", "", 400, "bad_request: invalid payload");
+		publish_ack("", "", false, 400, "", "bad_request");
 		return;
 	}
 	const Json::Value& type_value = root["type"];
@@ -337,17 +349,17 @@ void EkinoxService::handle_command_message(const std::string& payload) {
 	std::string id = id_value.isString() ? id_value.asString() : "";
 	log_rx_type(type, id);
 	if (!type_value.isString() || type.empty()) {
-		publish_ack("", id, 400, "bad_request: missing type");
+		publish_ack("", id, false, 400, "", "bad_request");
 		return;
 	}
 	if (!id_value.isString() || id.empty()) {
-		publish_ack(type, "", 400, "bad_request: missing id");
+		publish_ack(type, "", false, 400, "", "bad_request");
 		return;
 	}
 	if (root.isMember("ts")) {
 		const Json::Value& ts_value = root["ts"];
 		if (!ts_value.isInt64() && !ts_value.isUInt64()) {
-			publish_ack(type, id, 400, "bad_request: ts must be int");
+			publish_ack(type, id, false, 400, "", "bad_request");
 			return;
 		}
 	}
@@ -357,11 +369,11 @@ void EkinoxService::handle_command_message(const std::string& payload) {
 		(cmd_type == CommandType::kLoggerStop) ||
 		(cmd_type == CommandType::kLoggerStatus);
 	if (!supported) {
-		publish_ack(type, id, 400, "bad_request: unknown type");
+		publish_ack(type, id, false, 400, "", "unknown_type");
 		return;
 	}
 	std::cout << "[ekinox] dispatch type=" << type << " id=" << id << " stub" << '\n';
-	publish_ack(type, id, 200, "stub ok");
+	publish_ack(type, id, true, 200, "stub ok", "");
 }
 
 void EkinoxService::handle_logger_start(const std::string& id, const std::string& type) {
@@ -512,14 +524,15 @@ void EkinoxService::send_ack(const std::string& id,
 	const std::string& message,
 	const std::string& err,
 	int http_code) {
+	std::string ack_message = message;
 	std::string ack_err = err;
-	if (ack_err.empty()) {
-		ack_err = message;
+	if (ok && ack_message.empty()) {
+		ack_message = "ok";
 	}
-	if (ack_err.empty()) {
-		ack_err = ok ? "ok" : "error";
+	if (!ok && ack_err.empty()) {
+		ack_err = "error";
 	}
-	publish_ack(type, id, http_code, ack_err);
+	publish_ack(type, id, ok, http_code, ack_message, ack_err);
 }
 
 bool EkinoxService::can_execute_logger_cmd(std::string& err) const {
