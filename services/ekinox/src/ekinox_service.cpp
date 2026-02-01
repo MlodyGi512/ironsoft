@@ -425,6 +425,9 @@ void EkinoxService::handle_command_message(const std::string& topic, const std::
 	}
 	std::cout << "[ekinox] dispatch type=" << type << " id=" << id << '\n';
 	switch (cmd_type) {
+	case CommandType::kPing:
+		handle_ping(id, type);
+		break;
 	case CommandType::kLoggerStart:
 		handle_logger_start(id, type, root);
 		break;
