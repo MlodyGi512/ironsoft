@@ -71,7 +71,6 @@ private:
 	int wait_for_token_rc(const mqtt::token_ptr& tok) const;
 
 private:
-	static constexpr std::uint32_t kLoggerRunningMask = 0x1u;
 	static constexpr int kRxTimeoutStrikesToReconnect = 5;
 
 	EkinoxConfig config_;

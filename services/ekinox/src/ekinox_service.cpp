@@ -8,6 +8,15 @@
 #include <sstream>
 #include <thread>
 
+// Manual test (see docs/TEST_EKINOX_SERVICE.md):
+// 1) ./build-ekinox/ekinox_service --config config/ekinox.json
+// 2) mosquitto_sub -h 127.0.0.1 -v -t "ironsoft/uav/drone001/cmd" -t "ironsoft/uav/drone001/ack" \
+//    -t "ironsoft/uav/drone001/ekinox/status"
+// 3) Publish:
+//    mosquitto_pub -h 127.0.0.1 -t "ironsoft/uav/drone001/cmd" -m '{"type":"logger.start","id":"t1","ts":0}'
+//    mosquitto_pub -h 127.0.0.1 -t "ironsoft/uav/drone001/cmd" -m '{"type":"logger.status","id":"t2","ts":0}'
+//    mosquitto_pub -h 127.0.0.1 -t "ironsoft/uav/drone001/cmd" -m '{"type":"logger.stop","id":"t3","ts":0}'
+
 namespace ironsoft::ekinox {
 
 namespace {
@@ -374,8 +383,21 @@ void EkinoxService::handle_command_message(const std::string& topic, const std::
 		publish_ack(type, id, false, 400, "", "unknown_type");
 		return;
 	}
-	std::cout << "[ekinox] dispatch type=" << type << " id=" << id << " stub" << '\n';
-	publish_ack(type, id, true, 200, "stub ok", "");
+	std::cout << "[ekinox] dispatch type=" << type << " id=" << id << '\n';
+	switch (cmd_type) {
+	case CommandType::kLoggerStart:
+		handle_logger_start(id, type);
+		break;
+	case CommandType::kLoggerStop:
+		handle_logger_stop(id, type);
+		break;
+	case CommandType::kLoggerStatus:
+		handle_logger_status(id, type);
+		break;
+	default:
+		publish_ack(type, id, false, 400, "", "unknown_type");
+		break;
+	}
 }
 
 void EkinoxService::handle_logger_start(const std::string& id, const std::string& type) {
@@ -393,35 +415,46 @@ void EkinoxService::handle_logger_start(const std::string& id, const std::string
 		send_ack(id, type, false, "", "INVALID_STATE", 409);
 		return;
 	}
-#if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)
-	SbgEComHandle* handle = udp_session_ ? udp_session_->ecom_handle() : nullptr;
-	if (!handle) {
-		send_ack(id, type, false, "", "SDK disabled or session closed", 503);
-		return;
-	}
 	set_state(ServiceState::kStarting);
 	publish_status();
-    LoggerResult result = EkinoxLoggerApi::start(handle, config_.rest_api);
-	if (result.ok) {
-		status_.recording_active = true;
-		status_.api_ok = true;
-		status_.last_error.clear();
-		set_state(ServiceState::kRecording);
-		publish_status();
-		send_ack(id, type, true, "logger started", "", 200);
-	} else {
+	const auto http_code = [](const LoggerResult& res, int fallback) {
+		return static_cast<int>(res.http_code != 0 ? res.http_code : fallback);
+	};
+	LoggerResult start_result = EkinoxLoggerApi::start_http(config_, config_.rest_api);
+	if (!start_result.ok) {
 		status_.api_ok = false;
-		set_error(result.error_string);
+		status_.link_alive = false;
+		const std::string err = !start_result.error_string.empty() ? start_result.error_string : "logger.start failed";
+		set_error(err);
 		set_state(ServiceState::kError);
 		publish_status();
-		send_ack(id, type, false, "", result.error_string, 500);
+		send_ack(id, type, false, "", err, http_code(start_result, 500));
+		return;
 	}
-#else
-	set_error("SDK disabled");
-	status_.api_ok = false;
+	std::uint32_t raw_status = 0;
+	bool recording = false;
+	LoggerResult status_result = EkinoxLoggerApi::status_http(config_, config_.rest_api, raw_status, recording);
+	const bool recording_flag_missing = status_result.ok && !recording;
+	if (!status_result.ok || recording_flag_missing) {
+		status_.api_ok = false;
+		status_.link_alive = status_result.ok;
+		const std::string err = recording_flag_missing ? "recording flag false"
+			: (!status_result.error_string.empty() ? status_result.error_string : "logger.status failed");
+		set_error(err);
+		set_state(ServiceState::kError);
+		publish_status();
+		const int code = status_result.ok ? http_code(status_result, 409) : http_code(status_result, 500);
+		send_ack(id, type, false, "", err, code);
+		return;
+	}
+	status_.recording_active = true;
+	status_.api_ok = true;
+	status_.link_alive = true;
+	status_.last_error.clear();
+	set_state(ServiceState::kRecording);
 	publish_status();
-	send_ack(id, type, false, "", "SDK disabled", 501);
-#endif
+	const std::string message = !start_result.message.empty() ? start_result.message : "recording started";
+	send_ack(id, type, true, message, "", http_code(start_result, 200));
 }
 
 void EkinoxService::handle_logger_stop(const std::string& id, const std::string& type) {
@@ -439,35 +472,46 @@ void EkinoxService::handle_logger_stop(const std::string& id, const std::string&
 		send_ack(id, type, false, "", "INVALID_STATE", 409);
 		return;
 	}
-#if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)
-	SbgEComHandle* handle = udp_session_ ? udp_session_->ecom_handle() : nullptr;
-	if (!handle) {
-		send_ack(id, type, false, "", "SDK disabled or session closed", 503);
-		return;
-	}
 	set_state(ServiceState::kStopping);
 	publish_status();
-    LoggerResult result = EkinoxLoggerApi::stop(handle, config_.rest_api);
-	if (result.ok) {
-		status_.recording_active = false;
-		status_.api_ok = true;
-		status_.last_error.clear();
-		set_state(ServiceState::kIdle);
-		publish_status();
-		send_ack(id, type, true, "logger stopped", "", 200);
-	} else {
+	const auto http_code = [](const LoggerResult& res, int fallback) {
+		return static_cast<int>(res.http_code != 0 ? res.http_code : fallback);
+	};
+	LoggerResult stop_result = EkinoxLoggerApi::stop_http(config_, config_.rest_api);
+	if (!stop_result.ok) {
 		status_.api_ok = false;
-		set_error(result.error_string);
+		status_.link_alive = false;
+		const std::string err = !stop_result.error_string.empty() ? stop_result.error_string : "logger.stop failed";
+		set_error(err);
 		set_state(ServiceState::kError);
 		publish_status();
-		send_ack(id, type, false, "", result.error_string, 500);
+		send_ack(id, type, false, "", err, http_code(stop_result, 500));
+		return;
 	}
-#else
-	set_error("SDK disabled");
-	status_.api_ok = false;
+	std::uint32_t raw_status = 0;
+	bool recording = false;
+	LoggerResult status_result = EkinoxLoggerApi::status_http(config_, config_.rest_api, raw_status, recording);
+	const bool still_recording = status_result.ok && recording;
+	if (!status_result.ok || still_recording) {
+		status_.api_ok = false;
+		status_.link_alive = status_result.ok;
+		const std::string err = still_recording ? "recording flag true"
+			: (!status_result.error_string.empty() ? status_result.error_string : "logger.status failed");
+		set_error(err);
+		set_state(ServiceState::kError);
+		publish_status();
+		const int code = status_result.ok ? http_code(status_result, 409) : http_code(status_result, 500);
+		send_ack(id, type, false, "", err, code);
+		return;
+	}
+	status_.recording_active = false;
+	status_.api_ok = true;
+	status_.link_alive = true;
+	status_.last_error.clear();
+	set_state(ServiceState::kIdle);
 	publish_status();
-	send_ack(id, type, false, "", "SDK disabled", 501);
-#endif
+	const std::string message = !stop_result.message.empty() ? stop_result.message : "recording stopped";
+	send_ack(id, type, true, message, "", http_code(stop_result, 200));
 }
 
 void EkinoxService::handle_logger_status(const std::string& id, const std::string& type) {
@@ -479,41 +523,30 @@ void EkinoxService::handle_logger_status(const std::string& id, const std::strin
 		send_ack(id, type, false, "", reason, 503);
 		return;
 	}
-#if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)
-	SbgEComHandle* handle = udp_session_ ? udp_session_->ecom_handle() : nullptr;
-	if (!handle) {
-		send_ack(id, type, false, "", "SDK disabled or session closed", 503);
-		return;
-	}
 	std::uint32_t raw_status = 0;
-    LoggerResult result = EkinoxLoggerApi::status(handle, raw_status, config_.rest_api);
+	bool recording = false;
+	LoggerResult result = EkinoxLoggerApi::status_http(config_, config_.rest_api, raw_status, recording);
+	const auto http_code = [](const LoggerResult& res, int fallback) {
+		return static_cast<int>(res.http_code != 0 ? res.http_code : fallback);
+	};
 	if (result.ok) {
 		status_.api_ok = true;
+		status_.link_alive = true;
 		status_.last_error.clear();
-		const bool running = (raw_status & kLoggerRunningMask) != 0u;
-		status_.recording_active = running;
-		if (running && status_.state != ServiceState::kRecording) {
-			set_state(ServiceState::kRecording);
-		} else if (!running && status_.state == ServiceState::kRecording) {
-			set_state(ServiceState::kIdle);
-		}
+		status_.recording_active = recording;
+		set_state(recording ? ServiceState::kRecording : ServiceState::kIdle);
 		publish_status();
-		std::ostringstream oss;
-		oss << "status=0x" << std::uppercase << std::hex << raw_status;
-		send_ack(id, type, true, oss.str(), "", 200);
+		const std::string message = !result.message.empty() ? result.message : (recording ? "recording active" : "recording inactive");
+		send_ack(id, type, true, message, "", http_code(result, 200));
 	} else {
 		status_.api_ok = false;
-		set_error(result.error_string);
+		status_.link_alive = false;
+		const std::string err = !result.error_string.empty() ? result.error_string : "logger.status failed";
+		set_error(err);
 		set_state(ServiceState::kError);
 		publish_status();
-		send_ack(id, type, false, "", result.error_string, 500);
+		send_ack(id, type, false, "", err, http_code(result, 500));
 	}
-#else
-	set_error("SDK disabled");
-	status_.api_ok = false;
-	publish_status();
-	send_ack(id, type, false, "", "SDK disabled", 501);
-#endif
 }
 
 void EkinoxService::handle_ping(const std::string& id, const std::string& type) {

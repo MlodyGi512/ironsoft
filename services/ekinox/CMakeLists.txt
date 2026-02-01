@@ -10,6 +10,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(JSONCPP REQUIRED IMPORTED_TARGET jsoncpp)
 find_package(PahoMqttCpp CONFIG REQUIRED)
 find_package(Threads REQUIRED)
+find_package(CURL REQUIRED)
 
 set(EKINOX_HAS_SBG 0)
 set(EKINOX_SBG_TARGET "")
@@ -81,6 +82,7 @@ target_link_libraries(ekinox_service
         PkgConfig::JSONCPP
         PahoMqttCpp::paho-mqttpp3
         Threads::Threads
+        CURL::libcurl
 )
 
 if(EKINOX_HAS_SBG)
