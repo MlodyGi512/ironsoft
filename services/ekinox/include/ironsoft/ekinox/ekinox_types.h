@@ -17,8 +17,9 @@ enum class ServiceState {
 
 enum class CommandType {
 	kPing = 0,
-	kStartLogger,
-	kStopLogger,
+	kLoggerStart,
+	kLoggerStop,
+	kLoggerStatus,
 	kUnknown
 };
 
@@ -31,8 +32,9 @@ inline constexpr std::string_view kStateStopping{"STOPPING"};
 inline constexpr std::string_view kStateError{"ERROR"};
 
 inline constexpr std::string_view kCmdPing{"ping"};
-inline constexpr std::string_view kCmdStartLogger{"start_logger"};
-inline constexpr std::string_view kCmdStopLogger{"stop_logger"};
+inline constexpr std::string_view kCmdLoggerStart{"logger.start"};
+inline constexpr std::string_view kCmdLoggerStop{"logger.stop"};
+inline constexpr std::string_view kCmdLoggerStatus{"logger.status"};
 
 inline constexpr std::string_view to_string(ServiceState state) noexcept {
 	switch (state) {
@@ -91,10 +93,12 @@ inline constexpr std::string_view to_string(CommandType type) noexcept {
 	switch (type) {
 	case CommandType::kPing:
 		return kCmdPing;
-	case CommandType::kStartLogger:
-		return kCmdStartLogger;
-	case CommandType::kStopLogger:
-		return kCmdStopLogger;
+	case CommandType::kLoggerStart:
+		return kCmdLoggerStart;
+	case CommandType::kLoggerStop:
+		return kCmdLoggerStop;
+	case CommandType::kLoggerStatus:
+		return kCmdLoggerStatus;
 	default:
 		return kCmdPing;
 	}
@@ -105,12 +109,16 @@ inline constexpr bool try_parse_command_type(std::string_view text, CommandType&
 		type = CommandType::kPing;
 		return true;
 	}
-	if (text == kCmdStartLogger) {
-		type = CommandType::kStartLogger;
+	if (text == kCmdLoggerStart) {
+		type = CommandType::kLoggerStart;
 		return true;
 	}
-	if (text == kCmdStopLogger) {
-		type = CommandType::kStopLogger;
+	if (text == kCmdLoggerStop) {
+		type = CommandType::kLoggerStop;
+		return true;
+	}
+	if (text == kCmdLoggerStatus) {
+		type = CommandType::kLoggerStatus;
 		return true;
 	}
 	type = CommandType::kUnknown;

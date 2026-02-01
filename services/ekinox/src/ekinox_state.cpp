@@ -17,7 +17,9 @@ Json::Value build_status_json(const StatusPayload& payload) {
 	root["link_alive"] = payload.link_alive;
 	root["api_ok"] = payload.api_ok;
 	root["recording_active"] = payload.recording_active;
+	root["recording"] = payload.recording_active;
 	root["state"] = std::string{to_string(payload.state)};
+	root["mode"] = root["state"];
 	root["last_error"] = payload.last_error;
 	root["last_error_ts"] = static_cast<Json::Int64>(payload.last_error_ts);
 	return root;
@@ -30,12 +32,21 @@ Json::Value build_heartbeat_json(std::int64_t seq, std::int64_t uptime_s) {
 	return root;
 }
 
-Json::Value build_ack_json(const std::string& id, bool ok, const std::string& message, const std::string& error) {
+Json::Value build_ack_json(const std::string& id,
+	const std::string& type,
+	bool ok,
+	const std::string& message,
+	const std::string& error,
+	int http_code,
+	std::int64_t ts) {
 	Json::Value root;
 	root["id"] = id;
+	root["type"] = type;
 	root["ok"] = ok;
 	root["message"] = message;
-	root["error"] = error;
+	root["err"] = error;
+	root["http_code"] = http_code;
+	root["ts"] = static_cast<Json::Int64>(ts);
 	return root;
 }
 

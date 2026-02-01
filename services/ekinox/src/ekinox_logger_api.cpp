@@ -7,19 +7,16 @@
 namespace ironsoft::ekinox {
 
 namespace {
+#if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)
 LoggerResult make_result(SbgErrorCode code) {
 	LoggerResult result{};
 	result.error_code = static_cast<int>(code);
-#if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)
-	char buffer[256] = {};
-	sbgEComErrorToString(code, buffer);
-	result.error_string = buffer;
-#else
-	result.error_string = "sbgECom unavailable";
-#endif
+	const char* text = sbgErrorCodeToString(code);
+	result.error_string = text ? text : "";
 	result.ok = (code == SBG_NO_ERROR);
 	return result;
 }
+#endif
 
 LoggerResult make_handle_error() {
 	LoggerResult result{};

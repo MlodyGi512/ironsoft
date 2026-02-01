@@ -124,6 +124,13 @@ bool EkinoxUdpSession::poll(std::string& err) {
 	return false;
 }
 
+SbgEComHandle* EkinoxUdpSession::ecom_handle() noexcept {
+	if (!connected_) {
+		return nullptr;
+	}
+	return &ecom_handle_;
+}
+
 #else  // DEKINOX_HAS_SBG
 
 bool EkinoxUdpSession::open(const Config&, std::string& err) {

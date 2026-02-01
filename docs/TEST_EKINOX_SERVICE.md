@@ -11,9 +11,9 @@ cmake --build build-ekinox -j
 ```
 
 ## 2. Launch telemetry taps
-In terminal A, subscribe to all ekinox topics:
+In terminal A, subscribe to all drone topics:
 ```bash
-mosquitto_sub -h 127.0.0.1 -t "ironsoft/uav/drone001/ekinox/#" -v
+mosquitto_sub -h 127.0.0.1 -t "ironsoft/uav/drone001/#" -v
 ```
 Adjust host/drone ID to match `config/ekinox.json`.
 
@@ -33,29 +33,37 @@ Use terminal C for MQTT publishes (replace broker address if needed).
 
 ### 4.1 Ping
 ```bash
-mosquitto_pub -h 127.0.0.1 -t ironsoft/uav/drone001/ekinox/cmd \
-  -m '{"type":"ping","id":"cmd-1"}'
+mosquitto_pub -h 127.0.0.1 -t ironsoft/uav/drone001/cmd \
+  -m '{"type":"ping","id":"cmd-1","ts":'$((`date +%s`))'}'
 ```
-Expect `ack` with `ok:true` and `message:"pong"`.
+Expect `ack` with `type:"ping"`, `ok:true`, `http_code:200`, `message:"pong"`.
 
-### 4.2 Start logger stub
+### 4.2 Logger start
 ```bash
-mosquitto_pub -h 127.0.0.1 -t ironsoft/uav/drone001/ekinox/cmd \
-  -m '{"type":"start_logger","id":"cmd-2"}'
+mosquitto_pub -h 127.0.0.1 -t ironsoft/uav/drone001/cmd \
+  -m '{"type":"logger.start","id":"cmd-2","ts":'$((`date +%s`))'}'
 ```
-- `ack` reports `logger starting`.
-- `status` transitions `IDLE ? STARTING ? RECORDING` and sets `recording_active:true`.
+- `ack` contains `type:"logger.start"`, `ok:true`, `http_code:200`.
+- `status` retained payload shows `mode:"RECORDING"`, `recording:true`, `api_ok:true`.
 
-### 4.3 Stop logger stub
+### 4.3 Logger stop
 ```bash
-mosquitto_pub -h 127.0.0.1 -t ironsoft/uav/drone001/ekinox/cmd \
-  -m '{"type":"stop_logger","id":"cmd-3"}'
+mosquitto_pub -h 127.0.0.1 -t ironsoft/uav/drone001/cmd \
+  -m '{"type":"logger.stop","id":"cmd-3","ts":'$((`date +%s`))'}'
 ```
-- `ack` reports `logger stopping`.
-- `status` transitions `RECORDING ? STOPPING ? IDLE` and clears `recording_active`.
+- `ack` reports `type:"logger.stop"`, `ok:true`.
+- `status` returns to `mode:"IDLE"`, `recording:false`.
 
-### 4.4 Invalid transition
-While IDLE, send another `stop_logger` and expect `ack` with `ok:false` and `error:"INVALID_STATE"`; `status.last_error` updates.
+### 4.4 Logger status
+```bash
+mosquitto_pub -h 127.0.0.1 -t ironsoft/uav/drone001/cmd \
+  -m '{"type":"logger.status","id":"cmd-4","ts":'$((`date +%s`))'}'
+```
+- `ack` message body shows `status=0x0` (idle) or `0x1` (recording).
+- `status.api_ok` remains true when the sensor replies.
+
+### 4.5 Invalid transition
+While IDLE, send another `logger.stop` and expect `ack` with `ok:false`, `http_code:409`, `err:"INVALID_STATE"`; `status.last_error` updates.
 
 ## 5. Shutdown behavior
 Press `Ctrl+C` in terminal B.
@@ -63,10 +71,16 @@ Press `Ctrl+C` in terminal B.
 - `status` retained payload shows `link_alive:false` and `state:"DISCONNECTED"`.
 
 ## 6. SBG UDP link (hardware required)
-1. Ensure the SBG Ekinox sensor is reachable from the Raspberry Pi (default IP `192.169.101.2`).
+1. Ensure the SBG Ekinox sensor is reachable from the Raspberry Pi (default IP `192.168.100.2`).
 2. When the service starts, `presence` should transition from `offline` (`reason:"connecting"`) to `online` once the UDP link is established; `status.state` switches to `IDLE` and `api_ok:true`.
 3. Unplug the Ekinox Ethernet cable (or power off the device):
    - Within `rx_dead_ms` (~1.5 s) the service publishes `presence` `offline` with `reason:"rx timeout"` and `status` flips to `CONNECTING` with `link_alive:false`, `api_ok:false`.
 4. Plug the sensor back in: observe `presence` returning to `online` and `status` back to `IDLE` without restarting the process.
+
+## 7. Logger MQTT soak (hardware required)
+1. With the sensor recording, yank Ethernet/power:
+   - `presence` flips to offline with `reason:"rx timeout"`.
+   - `logger.status` commands now return `ok:false`, `err:"sensor offline"`, and `status.api_ok:false`.
+2. Restore the link and issue `logger.start` again to confirm the FSM recovers to `RECORDING` without restarting the service.
 
 Record console logs and MQTT captures for regressions before finishing the test.

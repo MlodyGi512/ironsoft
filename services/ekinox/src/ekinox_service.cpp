@@ -2,15 +2,16 @@
 
 #include <algorithm>
 #include <chrono>
+#include <iomanip>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <thread>
 
 namespace ironsoft::ekinox {
 
 namespace {
 constexpr std::chrono::milliseconds kLoopSleep{50};
-constexpr std::chrono::milliseconds kStateTransitionDelay{500};
 constexpr std::chrono::seconds kStatusInterval{1};
 constexpr std::chrono::seconds kHeartbeatInterval{1};
 
@@ -90,7 +91,6 @@ bool EkinoxService::run(std::atomic_bool& stop_flag) {
 			drain_commands();
 			ensure_sensor_session(now);
 			poll_sensor(now);
-			apply_pending_transition(now);
 
 			if (now >= next_status_pub_) {
 				publish_status();
@@ -266,8 +266,7 @@ void EkinoxService::handle_command_message(const std::string& payload) {
 	std::unique_ptr<Json::CharReader> reader(rb.newCharReader());
 	if (!reader->parse(payload.data(), payload.data() + payload.size(), &root, &errs)) {
 		std::cerr << "[ekinox] bad cmd json: " << errs << '\n';
-		Json::Value ack = build_ack_json("", false, "", "BAD_JSON");
-		publish_ack(serialize_json(ack));
+		send_ack("", "", false, "", "BAD_JSON", 400);
 		return;
 	}
 	const std::string id = root.get("id", "").asString();
@@ -276,79 +275,191 @@ void EkinoxService::handle_command_message(const std::string& payload) {
 	try_parse_command_type(type, cmd_type);
 
 	if (id.empty()) {
-		Json::Value ack = build_ack_json("", false, "", "MISSING_ID");
-		publish_ack(serialize_json(ack));
+		send_ack("", type, false, "", "MISSING_ID", 400);
 		return;
 	}
 
 	switch (cmd_type) {
 	case CommandType::kPing:
-		handle_ping(id);
+		handle_ping(id, type);
 		break;
-	case CommandType::kStartLogger:
-		handle_start_logger(id);
+	case CommandType::kLoggerStart:
+		handle_logger_start(id, type);
 		break;
-	case CommandType::kStopLogger:
-		handle_stop_logger(id);
+	case CommandType::kLoggerStop:
+		handle_logger_stop(id, type);
+		break;
+	case CommandType::kLoggerStatus:
+		handle_logger_status(id, type);
 		break;
 	default:
-		Json::Value ack = build_ack_json(id, false, "", "UNKNOWN_CMD");
-		publish_ack(serialize_json(ack));
+		send_ack(id, type, false, "", "UNKNOWN_CMD", 404);
 		break;
 	}
 }
 
-void EkinoxService::handle_start_logger(const std::string& id) {
+void EkinoxService::handle_logger_start(const std::string& id, const std::string& type) {
+	std::string reason;
+	if (!can_execute_logger_cmd(reason)) {
+		status_.api_ok = false;
+		set_error(reason);
+		publish_status();
+		send_ack(id, type, false, "", reason, 503);
+		return;
+	}
 	if (status_.state != ServiceState::kIdle) {
-		set_error("start_logger invalid state");
-		Json::Value ack = build_ack_json(id, false, "", "INVALID_STATE");
-		publish_ack(serialize_json(ack));
+		set_error("logger.start invalid state");
+		publish_status();
+		send_ack(id, type, false, "", "INVALID_STATE", 409);
+		return;
+	}
+#if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)
+	SbgEComHandle* handle = udp_session_ ? udp_session_->ecom_handle() : nullptr;
+	if (!handle) {
+		send_ack(id, type, false, "", "SDK disabled or session closed", 503);
 		return;
 	}
 	set_state(ServiceState::kStarting);
-	// TODO: Replace stub delay with real sbgECom logger start once SDK is wired (prompt 4/6).
-	schedule_transition(ServiceState::kRecording, true);
-	Json::Value ack = build_ack_json(id, true, "logger starting", "");
-	publish_ack(serialize_json(ack));
+	publish_status();
+	LoggerResult result = EkinoxLoggerApi::start(handle);
+	if (result.ok) {
+		status_.recording_active = true;
+		status_.api_ok = true;
+		status_.last_error.clear();
+		set_state(ServiceState::kRecording);
+		publish_status();
+		send_ack(id, type, true, "logger started", "", 200);
+	} else {
+		status_.api_ok = false;
+		set_error(result.error_string);
+		set_state(ServiceState::kError);
+		publish_status();
+		send_ack(id, type, false, "", result.error_string, 500);
+	}
+#else
+	set_error("SDK disabled");
+	status_.api_ok = false;
+	publish_status();
+	send_ack(id, type, false, "", "SDK disabled", 501);
+#endif
 }
 
-void EkinoxService::handle_stop_logger(const std::string& id) {
+void EkinoxService::handle_logger_stop(const std::string& id, const std::string& type) {
+	std::string reason;
+	if (!can_execute_logger_cmd(reason)) {
+		status_.api_ok = false;
+		set_error(reason);
+		publish_status();
+		send_ack(id, type, false, "", reason, 503);
+		return;
+	}
 	if (status_.state != ServiceState::kRecording) {
-		set_error("stop_logger invalid state");
-		Json::Value ack = build_ack_json(id, false, "", "INVALID_STATE");
-		publish_ack(serialize_json(ack));
+		set_error("logger.stop invalid state");
+		publish_status();
+		send_ack(id, type, false, "", "INVALID_STATE", 409);
+		return;
+	}
+#if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)
+	SbgEComHandle* handle = udp_session_ ? udp_session_->ecom_handle() : nullptr;
+	if (!handle) {
+		send_ack(id, type, false, "", "SDK disabled or session closed", 503);
 		return;
 	}
 	set_state(ServiceState::kStopping);
-	// TODO: Replace stub delay with real sbgECom logger stop once SDK is wired (prompt 4/6).
-	schedule_transition(ServiceState::kIdle, false);
-	Json::Value ack = build_ack_json(id, true, "logger stopping", "");
+	publish_status();
+	LoggerResult result = EkinoxLoggerApi::stop(handle);
+	if (result.ok) {
+		status_.recording_active = false;
+		status_.api_ok = true;
+		status_.last_error.clear();
+		set_state(ServiceState::kIdle);
+		publish_status();
+		send_ack(id, type, true, "logger stopped", "", 200);
+	} else {
+		status_.api_ok = false;
+		set_error(result.error_string);
+		set_state(ServiceState::kError);
+		publish_status();
+		send_ack(id, type, false, "", result.error_string, 500);
+	}
+#else
+	set_error("SDK disabled");
+	status_.api_ok = false;
+	publish_status();
+	send_ack(id, type, false, "", "SDK disabled", 501);
+#endif
+}
+
+void EkinoxService::handle_logger_status(const std::string& id, const std::string& type) {
+	std::string reason;
+	if (!can_execute_logger_cmd(reason)) {
+		status_.api_ok = false;
+		set_error(reason);
+		publish_status();
+		send_ack(id, type, false, "", reason, 503);
+		return;
+	}
+#if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)
+	SbgEComHandle* handle = udp_session_ ? udp_session_->ecom_handle() : nullptr;
+	if (!handle) {
+		send_ack(id, type, false, "", "SDK disabled or session closed", 503);
+		return;
+	}
+	std::uint32_t raw_status = 0;
+	LoggerResult result = EkinoxLoggerApi::status(handle, raw_status);
+	if (result.ok) {
+		status_.api_ok = true;
+		status_.last_error.clear();
+		const bool running = (raw_status & kLoggerRunningMask) != 0u;
+		status_.recording_active = running;
+		if (running && status_.state != ServiceState::kRecording) {
+			set_state(ServiceState::kRecording);
+		} else if (!running && status_.state == ServiceState::kRecording) {
+			set_state(ServiceState::kIdle);
+		}
+		publish_status();
+		std::ostringstream oss;
+		oss << "status=0x" << std::uppercase << std::hex << raw_status;
+		send_ack(id, type, true, oss.str(), "", 200);
+	} else {
+		status_.api_ok = false;
+		set_error(result.error_string);
+		set_state(ServiceState::kError);
+		publish_status();
+		send_ack(id, type, false, "", result.error_string, 500);
+	}
+#else
+	set_error("SDK disabled");
+	status_.api_ok = false;
+	publish_status();
+	send_ack(id, type, false, "", "SDK disabled", 501);
+#endif
+}
+
+void EkinoxService::handle_ping(const std::string& id, const std::string& type) {
+	send_ack(id, type, true, "pong", "", 200);
+}
+
+void EkinoxService::send_ack(const std::string& id,
+	const std::string& type,
+	bool ok,
+	const std::string& message,
+	const std::string& err,
+	int http_code) {
+	Json::Value ack = build_ack_json(id, type, ok, message, err, http_code, unix_ts());
 	publish_ack(serialize_json(ack));
 }
 
-void EkinoxService::handle_ping(const std::string& id) {
-	Json::Value ack = build_ack_json(id, true, "pong", "");
-	publish_ack(serialize_json(ack));
-}
-
-void EkinoxService::schedule_transition(ServiceState target_state, bool recording_active) {
-	PendingTransition pending;
-	pending.target = target_state;
-	pending.recording_active = recording_active;
-	pending.due = steady_clock::now() + kStateTransitionDelay;
-	pending_transition_ = pending;
-}
-
-void EkinoxService::apply_pending_transition(time_point now) {
-	if (!pending_transition_.has_value()) {
-		return;
+bool EkinoxService::can_execute_logger_cmd(std::string& err) const {
+	if (!connected_) {
+		err = "MQTT offline";
+		return false;
 	}
-	if (now < pending_transition_->due) {
-		return;
+	if (!sensor_connected_ || !udp_session_) {
+		err = "sensor offline";
+		return false;
 	}
-	status_.recording_active = pending_transition_->recording_active;
-	set_state(pending_transition_->target);
-	pending_transition_.reset();
+	return true;
 }
 
 void EkinoxService::ensure_sensor_session(time_point now) {
