@@ -354,6 +354,7 @@ void EkinoxService::publish_ack(const std::string& type,
 			}
 		}
 		std::cout << "[mqtt] TX ack topic=" << topic
+			<< " payload=" << payload
 			<< " type=" << (type.empty() ? "-" : type)
 			<< " id=" << (id.empty() ? "-" : id)
 			<< " ok=" << (ok ? "1" : "0")
@@ -422,7 +423,8 @@ void EkinoxService::handle_command_message(const std::string& topic, const std::
 	}
 	CommandType cmd_type = CommandType::kUnknown;
 	try_parse_command_type(type, cmd_type);
-	const bool supported = (cmd_type == CommandType::kLoggerStart) ||
+	const bool supported = (cmd_type == CommandType::kPing) ||
+		(cmd_type == CommandType::kLoggerStart) ||
 		(cmd_type == CommandType::kLoggerStop) ||
 		(cmd_type == CommandType::kLoggerStatus);
 	if (!supported) {
