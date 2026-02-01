@@ -1,9 +1,13 @@
 #include "ironsoft/ekinox/ekinox_logger_api.h"
 #include "ironsoft/ekinox/ekinox_config.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <sstream>
+#include <string>
 
 #include <json/json.h>
 
@@ -14,6 +18,44 @@
 namespace ironsoft::ekinox {
 
 namespace {
+#if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)
+
+static std::string log_rest_reply(const char* verb,
+	const std::string& path,
+	const SbgEComCmdApiReply& reply) {
+	const std::string body = (reply.pContent != nullptr) ? std::string(reply.pContent) : std::string();
+	std::string preview = body;
+	if (preview.size() > 512) {
+		preview.resize(512);
+		preview += "...";
+	}
+
+	std::ostringstream oss;
+	oss << verb << ' ' << path << " -> HTTP " << reply.statusCode << " body=\"" << preview << "\"";
+	const std::string line = oss.str();
+	std::cout << "[ekinox][rest] " << line << std::endl;
+	return preview;
+}
+
+static LoggerResult make_http_result(std::uint16_t status_code,
+	const std::string& preview_or_msg) {
+	LoggerResult r{};
+	r.ok = (status_code == 200);
+	if (r.ok) {
+		r.error_code = 0;
+		r.error_string.clear();
+	} else {
+		r.error_code = static_cast<int>(status_code);
+		if (!preview_or_msg.empty()) {
+			r.error_string = preview_or_msg;
+		} else {
+			r.error_string = "http_" + std::to_string(status_code);
+		}
+	}
+	return r;
+}
+
+#endif  // DEKINOX_HAS_SBG
 #if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)
 LoggerResult make_result(SbgErrorCode code) {
 	LoggerResult result{};
