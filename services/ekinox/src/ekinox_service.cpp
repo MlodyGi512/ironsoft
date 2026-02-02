@@ -86,29 +86,6 @@ bool logger_state_matches(const LoggerResult& result, bool expected) {
 	return result.ok && result.has_recording_flag && (result.recording_active == expected);
 }
 
-std::string sanitize_ascii(std::string_view text) {
-	std::string out;
-	out.reserve(text.size());
-	for (unsigned char ch : text) {
-		if ((ch >= 0x20 && ch <= 0x7E) || ch == '\n' || ch == '\r' || ch == '\t') {
-			out.push_back(static_cast<char>(ch));
-		} else if (ch == 0) {
-			break;
-		} else {
-			out.push_back('?');
-		}
-	}
-	return out;
-}
-
-std::string sanitize_and_clip(std::string_view text) {
-	std::string sanitized = sanitize_ascii(text);
-	if (sanitized.size() <= kMaxErrorText) {
-		return sanitized;
-	}
-	return sanitized.substr(0, kMaxErrorText) + "...";
-}
-
 bool result_reports_recording(const LoggerResult& result) {
 	return result.ok && result.has_recording_flag && result.recording_active;
 }
