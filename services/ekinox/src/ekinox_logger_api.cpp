@@ -17,7 +17,7 @@ namespace ironsoft::ekinox {
 
 namespace {
 
-constexpr std::size_t kMaxLoggedBody = 512;
+constexpr std::size_t kMaxLoggedBody = 300;
 constexpr long kConnectTimeoutSec = 2;
 constexpr long kRequestTimeoutSec = 3;
 
@@ -45,10 +45,17 @@ std::string make_preview(const std::string& body) {
 	return body.substr(0, kMaxLoggedBody) + "...";
 }
 
-void log_http_call(const std::string& method, const std::string& url, long http_code, const std::string& preview) {
+void log_http_call(const std::string& method,
+	const std::string& url,
+	long http_code,
+	const std::string& preview_body,
+	const std::string& preview_payload) {
+	const std::string body_print = preview_body.empty() ? std::string{"-"} : preview_body;
+	const std::string payload_print = preview_payload.empty() ? std::string{"-"} : preview_payload;
 	std::cout << "[ekinox][http] " << method << ' ' << url
 		<< " -> HTTP " << http_code
-		<< " body=\"" << (preview.empty() ? std::string{"-"} : preview) << "\""
+		<< " payload=\"" << payload_print << "\""
+		<< " body=\"" << body_print << "\""
 		<< '\n';
 }
 
@@ -246,13 +253,14 @@ LoggerResult perform_http_request(const std::string& method, const std::string& 
 	if (headers) {
 		curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
 	}
-	const CURLcode rc = curl_easy_perform(handle);
+    const CURLcode rc = curl_easy_perform(handle);
 	long http_code = 0;
 	if (rc == CURLE_OK) {
 		curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &http_code);
 	}
-	std::string preview = (rc == CURLE_OK) ? make_preview(response) : std::string{curl_easy_strerror(rc)};
-	log_http_call(method, url, http_code, preview);
+    const std::string preview_body = (rc == CURLE_OK) ? make_preview(response) : std::string{curl_easy_strerror(rc)};
+    const std::string preview_payload = (method == "GET") ? std::string{} : make_preview(payload);
+    log_http_call(method, url, http_code, preview_body, preview_payload);
 	if (headers) {
 		curl_slist_free_all(headers);
 	}

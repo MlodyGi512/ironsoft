@@ -7,6 +7,7 @@
 #include <iostream>
 #include <memory>
 #include <sstream>
+#include <string_view>
 #include <thread>
 
 // Manual test (see docs/TEST_EKINOX_SERVICE.md):
@@ -25,6 +26,7 @@ constexpr std::chrono::milliseconds kLoopSleep{50};
 constexpr std::chrono::seconds kStatusInterval{1};
 constexpr std::chrono::seconds kHeartbeatInterval{1};
 constexpr std::chrono::seconds kVerificationDelay{1};
+constexpr std::size_t kMaxErrorText{256};
 
 std::string make_client_id() {
 	const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -37,10 +39,10 @@ int http_code_or_default(const LoggerResult& result, int fallback) {
 
 std::string rest_error_or_http(const LoggerResult& result) {
 	if (!result.body.empty()) {
-		return result.body;
+		return sanitize_and_clip(result.body);
 	}
 	if (!result.error_string.empty()) {
-		return result.error_string;
+		return sanitize_and_clip(result.error_string);
 	}
 	if (result.http_code > 0) {
 		return "HTTP_" + std::to_string(result.http_code);
@@ -53,6 +55,37 @@ std::string rest_error_or_http(const LoggerResult& result) {
 
 bool logger_state_matches(const LoggerResult& result, bool expected) {
 	return result.ok && result.has_recording_flag && (result.recording_active == expected);
+}
+
+std::string sanitize_ascii(std::string_view text) {
+	std::string out;
+	out.reserve(text.size());
+	for (unsigned char ch : text) {
+		if ((ch >= 0x20 && ch <= 0x7E) || ch == '\n' || ch == '\r' || ch == '\t') {
+			out.push_back(static_cast<char>(ch));
+		} else if (ch == 0) {
+			break;
+		} else {
+			out.push_back('?');
+		}
+	}
+	return out;
+}
+
+std::string sanitize_and_clip(std::string_view text) {
+	std::string sanitized = sanitize_ascii(text);
+	if (sanitized.size() <= kMaxErrorText) {
+		return sanitized;
+	}
+	return sanitized.substr(0, kMaxErrorText) + "...";
+}
+
+bool result_reports_recording(const LoggerResult& result) {
+	return result.ok && result.has_recording_flag && result.recording_active;
+}
+
+bool result_reports_idle(const LoggerResult& result) {
+	return result.ok && result.has_recording_flag && !result.recording_active;
 }
 
 }  // namespace
@@ -227,6 +260,8 @@ bool EkinoxService::connect_once() {
 		publish_presence(false, "connecting");
 		publish_status();
 		std::cout << "[ekinox] Connected" << '\n';
+	request_logger_state("connect.selftest");
+	publish_status();
 		return true;
 	} catch (const mqtt::exception& ex) {
 		set_state(ServiceState::kDisconnected);
@@ -467,17 +502,28 @@ void EkinoxService::handle_logger_start(const std::string& id, const std::string
 		send_ack(id, type, false, rest_reason, "bad_config", 400);
 		return;
 	}
+	LoggerResult pre_status = request_logger_state("logger.start.precheck");
+	publish_status();
+	if (result_reports_recording(pre_status)) {
+		send_ack(id, type, true, "already recording", "", http_code_or_default(pre_status, 200));
+		return;
+	}
 	std::string session_name = extract_session_name(cmd);
 	if (session_name.empty()) {
 		session_name = generate_session_name();
 	}
-	status_.session_name = session_name;
 	set_state(ServiceState::kStarting);
 	publish_status();
 	LoggerResult start_result = EkinoxLoggerApi::dataLoggerStart(config_, config_.rest_api, session_name);
 	mark_rest_result(start_result, "logger.start");
 	const int start_http_code = http_code_or_default(start_result, 500);
 	if (!start_result.ok) {
+		if (start_result.http_code == 409) {
+			LoggerResult conflict_state = request_logger_state("logger.start.conflict");
+			publish_status();
+			send_ack(id, type, true, "already recording", "", start_http_code);
+			return;
+		}
 		const bool not_found = (start_result.http_code == 404);
 		set_state(not_found ? ServiceState::kIdle : ServiceState::kError);
 		std::string err = rest_error_or_http(start_result);
@@ -486,8 +532,7 @@ void EkinoxService::handle_logger_start(const std::string& id, const std::string
 		}
 		set_error(err);
 		publish_status();
-		std::string message = (start_result.http_code == 409) ? "already recording" : "start failed";
-		send_ack(id, type, false, message, err, start_http_code);
+		send_ack(id, type, false, "start failed", err, start_http_code);
 		return;
 	}
 	LoggerResult verify_now = request_logger_state("logger.start.verify.now");
@@ -525,12 +570,32 @@ void EkinoxService::handle_logger_stop(const std::string& id, const std::string&
 		send_ack(id, type, false, rest_reason, "bad_config", 400);
 		return;
 	}
+	LoggerResult pre_status = request_logger_state("logger.stop.precheck");
+	publish_status();
+	if (result_reports_idle(pre_status)) {
+		status_.session_name.clear();
+		set_state(ServiceState::kIdle);
+		publish_status();
+		send_ack(id, type, true, "already stopped", "", http_code_or_default(pre_status, 200));
+		return;
+	}
 	set_state(ServiceState::kStopping);
 	publish_status();
 	LoggerResult stop_result = EkinoxLoggerApi::dataLoggerStop(config_, config_.rest_api);
 	mark_rest_result(stop_result, "logger.stop");
 	const int stop_http_code = http_code_or_default(stop_result, 500);
 	if (!stop_result.ok) {
+		if (stop_result.http_code == 500 || stop_result.http_code == 409) {
+			LoggerResult retry_state = request_logger_state("logger.stop.post_error");
+			publish_status();
+			if (result_reports_idle(retry_state)) {
+				status_.session_name.clear();
+				set_state(ServiceState::kIdle);
+				publish_status();
+				send_ack(id, type, true, "already stopped", "", stop_http_code);
+				return;
+			}
+		}
 		const bool not_found = (stop_result.http_code == 404);
 		set_state(not_found ? ServiceState::kIdle : ServiceState::kError);
 		std::string err = rest_error_or_http(stop_result);
@@ -539,8 +604,7 @@ void EkinoxService::handle_logger_stop(const std::string& id, const std::string&
 		}
 		set_error(err);
 		publish_status();
-		std::string message = (stop_result.http_code == 409 || stop_result.http_code == 500) ? "no active session" : "stop failed";
-		send_ack(id, type, false, message, err, stop_http_code);
+		send_ack(id, type, false, "stop failed", err, stop_http_code);
 		return;
 	}
 	LoggerResult verify_now = request_logger_state("logger.stop.verify.now");
@@ -613,6 +677,8 @@ void EkinoxService::send_ack(const std::string& id,
 	if (!ok && ack_err.empty()) {
 		ack_err = "error";
 	}
+	ack_message = sanitize_and_clip(ack_message);
+	ack_err = sanitize_and_clip(ack_err);
 	publish_ack(type, id, ok, http_code, ack_message, ack_err);
 }
 
@@ -859,7 +925,7 @@ void EkinoxService::set_state(ServiceState state) {
 }
 
 void EkinoxService::set_error(const std::string& message) {
-	status_.last_error = message;
+	status_.last_error = sanitize_and_clip(message);
 	status_.last_error_ts = unix_ts();
 }
 
