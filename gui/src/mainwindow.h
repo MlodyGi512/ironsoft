@@ -22,6 +22,7 @@ private:
   void setPresenceLed(bool online);
   void setBackendLed(BackendHealth state);
   void setLedApi(bool ok);
+  void setTelemetryIndicator(bool linkAlive, bool hasValue);
   void setModeText(const QString& mode);
   void setLastError(const QString& err);
   void setPingRttDisplay(qint64 rttMs, bool timeout);
@@ -81,5 +82,7 @@ private:
   bool lastLedLogMqttConnected_ = false;
   bool lastLedLogEkinoxOnline_ = false;
   BackendHealth lastLedLogState_ = BackendHealth::Offline;
+  bool telemetryKnown_ = false;
+  bool telemetryLinkAlive_ = false;
   static constexpr int kHeartbeatTimeoutMs = 3000;
 };

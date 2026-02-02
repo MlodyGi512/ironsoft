@@ -31,6 +31,7 @@ MainWindow::MainWindow(QWidget* parent)
   setPresenceLed(false);
   setBackendLed(BackendHealth::Offline);
   setLedApi(false);
+  setTelemetryIndicator(false, false);
   setModeText("—");
   setLastError({});
   setPingRttDisplay(-1, false);
@@ -133,7 +134,8 @@ void MainWindow::logUiState(const QString& tag) {
   const QString mode = hasStatus_ ? (lastStatus_.mode.isEmpty() ? QStringLiteral("<empty>") : lastStatus_.mode) : QStringLiteral("<none>");
   const QString api = hasStatus_ ? (lastStatus_.api_ok ? QStringLiteral("true") : QStringLiteral("false")) : QStringLiteral("<n/a>");
   const QString lastErr = hasStatus_ ? (lastStatus_.last_error.isEmpty() ? QStringLiteral("<empty>") : lastStatus_.last_error) : QStringLiteral("<n/a>");
-  logUi(QStringLiteral("[ui-state][%1] mqttConnected=%2 presenceOnline=%3 heartbeatAgeMs=%4 hasStatus=%5 mode=%6 api_ok=%7 last_error=%8")
+  const QString telemetry = hasEkinoxStatus_ ? (lastEkinoxStatus_.link_alive ? QStringLiteral("true") : QStringLiteral("false")) : QStringLiteral("<n/a>");
+  logUi(QStringLiteral("[ui-state][%1] mqttConnected=%2 presenceOnline=%3 heartbeatAgeMs=%4 hasStatus=%5 mode=%6 api_ok=%7 link_alive=%8 last_error=%9")
             .arg(tag)
             .arg(clientState_ == MqttConnectionState::Connected ? QStringLiteral("true") : QStringLiteral("false"))
             .arg(presenceOnline_ ? QStringLiteral("true") : QStringLiteral("false"))
@@ -141,6 +143,7 @@ void MainWindow::logUiState(const QString& tag) {
             .arg(hasStatus_ ? QStringLiteral("true") : QStringLiteral("false"))
             .arg(mode)
             .arg(api)
+            .arg(telemetry)
             .arg(lastErr));
 }
 
@@ -209,6 +212,23 @@ void MainWindow::setLedApi(bool ok) {
       : "QLabel#ledApi{background-color:#5A1B1B;border:2px solid #D4AF37;border-radius:8px;min-width:16px;min-height:16px;max-width:16px;max-height:16px;}";
   ui->ledApi->setStyleSheet(style);
   ui->ledApi->setToolTip(ok ? tr("API healthy") : tr("API offline"));
+}
+
+void MainWindow::setTelemetryIndicator(bool linkAlive, bool hasValue) {
+  QString text;
+  QString style;
+  if (!hasValue) {
+    text = QStringLiteral("—");
+    style = QStringLiteral("color:#888888;");
+  } else if (linkAlive) {
+    text = tr("ONLINE");
+    style = QStringLiteral("color:#1B5A2B;font-weight:bold;");
+  } else {
+    text = tr("OFFLINE");
+    style = QStringLiteral("color:#B34700;font-weight:bold;");
+  }
+  ui->labelTelemetryValue->setText(text);
+  ui->labelTelemetryValue->setStyleSheet(QStringLiteral("QLabel#labelTelemetryValue{%1}").arg(style));
 }
 
 void MainWindow::setModeText(const QString& mode) {
@@ -299,6 +319,10 @@ void MainWindow::onConnectedChanged(bool connected) {
     setPresenceLed(false);
     ekinoxPresenceOnline_ = false;
     lastEkinoxHeartbeatMs_ = 0;
+    hasEkinoxStatus_ = false;
+    telemetryKnown_ = false;
+    telemetryLinkAlive_ = false;
+    setTelemetryIndicator(false, false);
   }
   updateBackendHealth();
   updateLoggerControls();
@@ -369,6 +393,9 @@ void MainWindow::onEkinoxPresenceChanged(bool online) {
 void MainWindow::onEkinoxStatusChanged(const EkinoxStatus& st) {
   hasEkinoxStatus_ = true;
   lastEkinoxStatus_ = st;
+  telemetryKnown_ = true;
+  telemetryLinkAlive_ = st.link_alive;
+  setTelemetryIndicator(st.link_alive, true);
   logUi(tr("[ekinox] status mode=%1 recording=%2 session='%3' link_alive=%4")
             .arg(st.mode.isEmpty() ? tr("-") : st.mode)
             .arg(st.recording_active ? tr("1") : tr("0"))
@@ -435,10 +462,10 @@ void MainWindow::updateBackendHealth() {
 void MainWindow::updateLoggerControls() {
   if (!ui) return;
   const bool connected = (clientState_ == MqttConnectionState::Connected);
-  const bool ekinoxLinkAlive = ekinoxPresenceOnline_ || (hasEkinoxStatus_ && lastEkinoxStatus_.link_alive);
+  const bool backendReady = connected && ekinoxPresenceOnline_;
   const bool recording = hasEkinoxStatus_ && lastEkinoxStatus_.recording_active;
-  const bool enableStart = connected && ekinoxLinkAlive && !recording;
-  const bool enableStop = connected && ekinoxLinkAlive && recording;
+  const bool enableStart = backendReady && !recording;
+  const bool enableStop = backendReady && recording;
   const bool enableSessionInput = !recording;
 
   const auto logStateChange = [this](const QString& control, bool enabled) {
@@ -464,9 +491,9 @@ void MainWindow::updateLoggerControls() {
   }
 
   if (!enableStop) {
-    logUi(tr("[ui] Stop disabled because: mqttConnected=%1 ekinoxLinkAlive=%2 recordingActive=%3 hasEkinoxStatus=%4")
+    logUi(tr("[ui] Stop disabled (connected=%1 presence=%2 recording=%3 hasStatus=%4)")
               .arg(connected ? "1" : "0")
-              .arg(ekinoxLinkAlive ? "1" : "0")
+              .arg(ekinoxPresenceOnline_ ? "1" : "0")
               .arg(recording ? "1" : "0")
               .arg(hasEkinoxStatus_ ? "1" : "0"));
   }
