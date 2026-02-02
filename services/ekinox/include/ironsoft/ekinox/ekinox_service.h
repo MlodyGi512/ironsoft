@@ -69,6 +69,7 @@ private:
 	void update_link_health(const std::string& reason);
 	void refresh_rest_health(time_point now);
 	void set_udp_link_alive(bool alive, const std::string& reason);
+	void update_presence_state(time_point now, const std::string& reason_override = "");
 	LoggerResult request_logger_state(const std::string& context_reason);
 	std::string generate_session_name() const;
 	std::string extract_session_name(const Json::Value& cmd) const;
@@ -80,7 +81,6 @@ private:
 
 private:
 	static constexpr int kRxTimeoutStrikesToReconnect = 5;
-	static constexpr std::chrono::seconds kRestAliveTtl{3};
 
 	EkinoxConfig config_;
 	EkinoxTopics topics_;
@@ -109,6 +109,7 @@ private:
 	bool udp_link_alive_ = false;
 	bool rest_alive_ = false;
 	time_point last_rest_success_{};
+	time_point last_rest_ok_{};
 	std::string last_rest_error_;
 	std::int64_t heartbeat_seq_ = 0;
 	time_point start_tp_{};
@@ -118,6 +119,8 @@ private:
 	bool reported_no_sbg_ = false;
 	EkinoxUdpSession::Config udp_config_{};
 	std::int64_t last_presence_ts_ = 0;
+	std::chrono::milliseconds presence_timeout_{5000};
+	std::chrono::milliseconds rest_alive_ttl_{5000};
 	std::unique_ptr<EkinoxUdpSession> udp_session_;
 };
 

@@ -175,6 +175,9 @@ bool loadEkinoxConfig(const std::string& path, EkinoxConfig& cfg, std::string& e
 		if (!read_timeout("reconnect_backoff_max_ms", cfg.timeouts.reconnect_backoff_max_ms)) {
 			return false;
 		}
+		if (!read_timeout("presence_timeout_ms", cfg.timeouts.presence_timeout_ms)) {
+			return false;
+		}
 	}
 
 	const Json::Value& rest_api = root["rest_api"];

@@ -17,7 +17,8 @@
     "start_timeout_ms": 10000,
     "stop_timeout_ms": 10000,
     "reconnect_backoff_ms": 250,
-    "reconnect_backoff_max_ms": 2000
+    "reconnect_backoff_max_ms": 2000,
+    "presence_timeout_ms": 5000
   },
   "rest_api": {
     "base_path": "/api/v1",

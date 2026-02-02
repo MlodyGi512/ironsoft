@@ -1,7 +1,6 @@
 #include "ironsoft/ekinox/ekinox_service.h"
 
 #include <algorithm>
-#include <algorithm>
 #include <chrono>
 #include <ctime>
 #include <iomanip>
@@ -28,6 +27,7 @@ constexpr std::chrono::milliseconds kLoopSleep{50};
 constexpr std::chrono::seconds kStatusInterval{1};
 constexpr std::chrono::seconds kHeartbeatInterval{1};
 constexpr std::chrono::seconds kVerificationDelay{1};
+constexpr std::chrono::milliseconds kPresenceDefault{5000};
 constexpr std::size_t kMaxErrorText{256};
 
 std::string sanitize_and_clip(std::string_view text, std::size_t max_len = 300) {
@@ -150,6 +150,11 @@ EkinoxService::EkinoxService(EkinoxConfig config)
 	udp_config_.local_port = static_cast<std::uint16_t>(std::max(config_.ekinox.udp_local_port, 0));
 	udp_config_.rx_dead_ms = static_cast<std::uint32_t>(std::max(config_.timeouts.rx_dead_ms, 0));
 	udp_session_ = std::make_unique<EkinoxUdpSession>();
+	const int presence_ms = (config_.timeouts.presence_timeout_ms > 0)
+		? config_.timeouts.presence_timeout_ms
+		: static_cast<int>(kPresenceDefault.count());
+	presence_timeout_ = std::chrono::milliseconds(presence_ms);
+	rest_alive_ttl_ = presence_timeout_;
 }
 
 EkinoxService::~EkinoxService() {
@@ -214,6 +219,7 @@ void EkinoxService::connection_lost(const std::string& cause) {
 	sensor_connected_ = false;
 	set_state(ServiceState::kDisconnected);
 	next_reconnect_attempt_ = steady_clock::now();
+	update_presence_state(steady_clock::now(), "mqtt offline");
 }
 
 void EkinoxService::message_arrived(mqtt::const_message_ptr msg) {
@@ -263,7 +269,7 @@ bool EkinoxService::connect_once() {
 		rest_alive_ = false;
 		last_rest_error_.clear();
 		set_state(ServiceState::kConnecting);
-		publish_presence(false, "connecting");
+		update_presence_state(steady_clock::now(), "connecting");
 		publish_status();
 		std::cout << "[ekinox] Connected" << '\n';
 	request_logger_state("connect.selftest");
@@ -312,17 +318,18 @@ void EkinoxService::ensure_connection(time_point now) {
 void EkinoxService::publish_presence(bool online, const std::string& reason) {
 	if (!connected_) {
 		presence_.online = online;
-		presence_.reason = reason;
+		presence_.reason = sanitize_and_clip(reason);
 		presence_.timestamp = unix_ts();
 		last_presence_ts_ = presence_.timestamp;
 		presence_online_ = online;
 		return;
 	}
-	if (presence_online_ == online && presence_.reason == reason) {
+	const std::string sanitized_reason = sanitize_and_clip(reason);
+	if (presence_online_ == online && presence_.reason == sanitized_reason) {
 		return;
 	}
 	presence_.online = online;
-	presence_.reason = reason;
+	presence_.reason = sanitized_reason;
 	presence_.timestamp = unix_ts();
 	last_presence_ts_ = presence_.timestamp;
 	Json::Value payload = build_presence_json(presence_);
@@ -709,34 +716,25 @@ bool EkinoxService::validate_rest_endpoint(std::string& err) const {
 }
 
 void EkinoxService::mark_rest_result(const LoggerResult& result, const std::string& context_reason) {
+	const auto now = steady_clock::now();
 	if (result.ok) {
 		rest_alive_ = true;
-		last_rest_success_ = steady_clock::now();
+		last_rest_success_ = now;
+		last_rest_ok_ = now;
 		last_rest_error_.clear();
 	} else {
 		rest_alive_ = false;
 		last_rest_error_ = !result.error_string.empty() ? result.error_string : context_reason;
 	}
 	update_link_health(last_rest_error_);
+	update_presence_state(now);
 }
 
-void EkinoxService::update_link_health(const std::string& reason) {
-	const bool udp_alive_now = sensor_connected_ && udp_link_alive_;
-	const bool rest_alive_now = rest_alive_;
-	status_.api_ok = rest_alive_now;
-	status_.link_alive = rest_alive_now || udp_alive_now;
-	if (status_.link_alive) {
-		publish_presence(true, "");
-		return;
-	}
-	std::string offline_reason = reason;
-	if (offline_reason.empty()) {
-		offline_reason = !last_rest_error_.empty() ? last_rest_error_ : status_.last_error;
-	}
-	if (offline_reason.empty()) {
-		offline_reason = "offline";
-	}
-	publish_presence(false, offline_reason);
+void EkinoxService::update_link_health(const std::string& /*reason*/) {
+	const auto now = steady_clock::now();
+	const bool rest_recent = (last_rest_ok_ != time_point{}) && ((now - last_rest_ok_) <= presence_timeout_);
+	status_.api_ok = rest_recent;
+	status_.link_alive = sensor_connected_ && udp_link_alive_;
 }
 
 void EkinoxService::refresh_rest_health(time_point now) {
@@ -746,16 +744,31 @@ void EkinoxService::refresh_rest_health(time_point now) {
 	if (last_rest_success_ == time_point{}) {
 		return;
 	}
-	if (now - last_rest_success_ > kRestAliveTtl) {
+	if (now - last_rest_success_ > rest_alive_ttl_) {
 		rest_alive_ = false;
 		last_rest_error_ = "rest timeout";
 		update_link_health(last_rest_error_);
+		update_presence_state(now);
 	}
 }
 
 void EkinoxService::set_udp_link_alive(bool alive, const std::string& reason) {
-	udp_link_alive_ = alive && sensor_connected_;
+	udp_link_alive_ = alive;
 	update_link_health(reason);
+}
+
+void EkinoxService::update_presence_state(time_point now, const std::string& reason_override) {
+	const bool has_recent_rest = (last_rest_ok_ != time_point{}) && ((now - last_rest_ok_) <= presence_timeout_);
+	const bool should_online = connected_ && has_recent_rest;
+	std::string reason = reason_override;
+	if (!should_online && reason.empty()) {
+		if (!connected_) {
+			reason = "mqtt offline";
+		} else if (!has_recent_rest) {
+			reason = last_rest_error_.empty() ? "rest timeout" : last_rest_error_;
+		}
+	}
+	publish_presence(should_online, reason);
 }
 
 LoggerResult EkinoxService::request_logger_state(const std::string& context_reason) {
@@ -862,12 +875,12 @@ void EkinoxService::ensure_sensor_session(time_point now) {
 	next_sensor_attempt_.reset();
 #else
 	(void)now;
-	status_.api_ok = false;
-	status_.link_alive = false;
+	sensor_connected_ = false;
+	udp_link_alive_ = false;
+	update_link_health("sbg disabled");
 	if (!reported_no_sbg_) {
 		reported_no_sbg_ = true;
 		set_error("sbgECom unavailable");
-		publish_presence(false, "sbg disabled");
 	}
 #endif
 }

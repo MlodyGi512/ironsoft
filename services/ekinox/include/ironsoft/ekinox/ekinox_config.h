@@ -35,6 +35,7 @@ struct EkinoxTimeouts {
 	int stop_timeout_ms = 10000;
 	int reconnect_backoff_ms = 250;
 	int reconnect_backoff_max_ms = 2000;
+	int presence_timeout_ms = 5000;
 };
 
 struct EkinoxConfig {
