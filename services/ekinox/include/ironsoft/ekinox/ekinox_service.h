@@ -66,10 +66,13 @@ private:
 	bool can_execute_logger_cmd(std::string& err) const;
 	bool validate_rest_endpoint(std::string& err) const;
 	void mark_rest_result(const LoggerResult& result, const std::string& context_reason);
-	void update_link_health();
+	void update_link_health(time_point now);
 	void refresh_rest_health(time_point now);
 	void set_udp_link_alive(bool alive);
 	void update_presence_state(time_point now, const std::string& reason_override = "");
+	static std::uint64_t ToMillis(time_point tp);
+	bool has_recent_rest(std::uint64_t now_ms) const;
+	bool rest_offline_condition(std::uint64_t now_ms) const;
 	LoggerResult request_logger_state(const std::string& context_reason);
 	std::string generate_session_name() const;
 	std::string extract_session_name(const Json::Value& cmd) const;
@@ -110,6 +113,8 @@ private:
 	bool rest_alive_ = false;
 	time_point last_rest_success_{};
 	time_point last_rest_ok_{};
+	std::uint64_t last_rest_ok_ts_ms_ = 0;
+	int rest_fail_streak_ = 0;
 	std::string last_rest_error_;
 	bool sensor_reconnect_needed_ = false;
 	std::int64_t heartbeat_seq_ = 0;
@@ -121,6 +126,7 @@ private:
 	bool reported_no_sbg_ = false;
 	EkinoxUdpSession::Config udp_config_{};
 	std::int64_t last_presence_ts_ = 0;
+	std::uint64_t last_presence_emit_ts_ms_ = 0;
 	std::chrono::milliseconds presence_timeout_{5000};
 	std::chrono::milliseconds rest_alive_ttl_{5000};
 	std::chrono::milliseconds rest_poll_interval_{2000};
