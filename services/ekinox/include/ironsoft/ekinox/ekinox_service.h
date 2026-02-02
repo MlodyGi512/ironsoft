@@ -70,6 +70,7 @@ private:
 	void refresh_rest_health(time_point now);
 	void set_udp_link_alive(bool alive);
 	void update_presence_state(time_point now, const std::string& reason_override = "");
+	static std::uint64_t mono_ms();
 	static std::uint64_t ToMillis(time_point tp);
 	bool has_recent_rest(std::uint64_t now_ms) const;
 	bool rest_offline_condition(std::uint64_t now_ms) const;

@@ -5,6 +5,7 @@
 #include <ctime>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -332,8 +333,8 @@ void EkinoxService::ensure_connection(time_point now) {
 
 void EkinoxService::publish_presence(bool online, const std::string& reason) {
 	const std::string sanitized_reason = sanitize_and_clip(reason);
-	const auto now_ms = ToMillis(steady_clock::now());
-	const bool same_state = (presence_online_ == online) && (presence_.reason == sanitized_reason);
+	const auto now_ms = mono_ms();
+	const bool same_state = (presence_online_ == online);
 	const bool rate_limited = same_state && (last_presence_emit_ts_ms_ != 0) &&
 		((now_ms - last_presence_emit_ts_ms_) < static_cast<std::uint64_t>(kPresenceMinPublishInterval.count()));
 	if (!connected_) {
@@ -747,8 +748,9 @@ bool EkinoxService::validate_rest_endpoint(std::string& err) const {
 
 void EkinoxService::mark_rest_result(const LoggerResult& result, const std::string& context_reason) {
 	const auto now = steady_clock::now();
-	const auto now_ms = ToMillis(now);
-	if (result.ok) {
+	const auto now_ms = mono_ms();
+	const bool rest_success = result.ok && (result.http_code >= 200) && (result.http_code < 300);
+	if (rest_success) {
 		rest_alive_ = true;
 		last_rest_success_ = now;
 		last_rest_ok_ = now;
@@ -760,21 +762,22 @@ void EkinoxService::mark_rest_result(const LoggerResult& result, const std::stri
 		return;
 	}
 	last_rest_error_ = !result.error_string.empty() ? result.error_string : context_reason;
-	++rest_fail_streak_;
+	const bool severe_failure = (result.http_code >= 500) || (result.http_code == 0);
+	if (severe_failure) {
+		++rest_fail_streak_;
+	}
 	const bool offline = rest_offline_condition(now_ms);
-	const std::int64_t age_since_ok = (last_rest_ok_ts_ms_ == 0)
-		? -1
-		: static_cast<std::int64_t>(now_ms - last_rest_ok_ts_ms_);
+	const std::uint64_t age_since_ok = (last_rest_ok_ts_ms_ == 0)
+		? std::numeric_limits<std::uint64_t>::max()
+		: (now_ms - last_rest_ok_ts_ms_);
 	std::cout << "[rest] fail context=" << context_reason
 		<< " streak=" << rest_fail_streak_
-		<< " age_since_last_ok_ms=" << age_since_ok
-		<< " offline=" << (offline ? 1 : 0)
+		<< " now=" << now_ms
+		<< " last_ok=" << last_rest_ok_ts_ms_
+		<< " age=" << age_since_ok
+		<< " offline_decision=" << (offline ? 1 : 0)
 		<< " reason='" << (last_rest_error_.empty() ? context_reason : last_rest_error_) << "'" << '\n';
-	if (offline) {
-		rest_alive_ = false;
-	} else {
-		rest_alive_ = true;
-	}
+	rest_alive_ = !offline;
 	update_link_health(now);
 	if (offline) {
 		update_presence_state(now);
@@ -799,10 +802,14 @@ void EkinoxService::refresh_rest_health(time_point now) {
 	if (!rest_alive_) {
 		return;
 	}
-	const std::int64_t age_since_ok = (last_rest_ok_ts_ms_ == 0)
-		? -1
-		: static_cast<std::int64_t>(now_ms - last_rest_ok_ts_ms_);
-	std::cout << "[rest] timeout age_since_last_ok_ms=" << age_since_ok << " offline=1" << '\n';
+	const std::uint64_t age_since_ok = (last_rest_ok_ts_ms_ == 0)
+		? std::numeric_limits<std::uint64_t>::max()
+		: (now_ms - last_rest_ok_ts_ms_);
+	std::cout << "[rest] timeout now=" << now_ms
+		<< " last_ok=" << last_rest_ok_ts_ms_
+		<< " age=" << age_since_ok
+		<< " streak=" << rest_fail_streak_
+		<< " offline_decision=1" << '\n';
 	rest_alive_ = false;
 	if (last_rest_error_.empty()) {
 		last_rest_error_ = "rest timeout";
@@ -1041,6 +1048,10 @@ int EkinoxService::wait_for_token_rc(const mqtt::token_ptr& tok) const {
 	return tok->get_return_code();
 }
 
+std::uint64_t EkinoxService::mono_ms() {
+	return ToMillis(steady_clock::now());
+}
+
 std::uint64_t EkinoxService::ToMillis(time_point tp) {
 	return static_cast<std::uint64_t>(
 		std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()).count());
@@ -1050,13 +1061,17 @@ bool EkinoxService::has_recent_rest(std::uint64_t now_ms) const {
 	if (last_rest_ok_ts_ms_ == 0) {
 		return false;
 	}
+	const std::uint64_t age_ms = now_ms - last_rest_ok_ts_ms_;
 	const auto window_ms = static_cast<std::uint64_t>(presence_timeout_.count());
-	return (now_ms - last_rest_ok_ts_ms_) <= window_ms;
+	return age_ms <= window_ms;
 }
 
 bool EkinoxService::rest_offline_condition(std::uint64_t now_ms) const {
 	const bool timeout_expired = !has_recent_rest(now_ms);
-	return timeout_expired || (rest_fail_streak_ >= 3);
+	if (rest_fail_streak_ >= 3) {
+		return true;
+	}
+	return (rest_fail_streak_ >= 1) && timeout_expired;
 }
 
 }  // namespace ironsoft::ekinox
