@@ -1,12 +1,14 @@
 #include "ironsoft/ekinox/ekinox_service.h"
 
 #include <algorithm>
+#include <algorithm>
 #include <chrono>
 #include <ctime>
 #include <iomanip>
 #include <iostream>
 #include <memory>
 #include <sstream>
+#include <string>
 #include <string_view>
 #include <thread>
 
@@ -27,6 +29,33 @@ constexpr std::chrono::seconds kStatusInterval{1};
 constexpr std::chrono::seconds kHeartbeatInterval{1};
 constexpr std::chrono::seconds kVerificationDelay{1};
 constexpr std::size_t kMaxErrorText{256};
+
+std::string sanitize_and_clip(std::string_view text, std::size_t max_len = 300) {
+	std::string out;
+	out.reserve(std::min<std::size_t>(text.size(), max_len));
+	for (unsigned char byte : text) {
+		char ch = static_cast<char>(byte);
+		if (byte == '\\' || byte == '"') {
+			if (out.size() + 2 > max_len) {
+				break;
+			}
+			out.push_back('\\');
+			out.push_back(ch);
+			continue;
+		}
+		if (byte < 0x20 && ch != '\n' && ch != '\r' && ch != '\t') {
+			ch = ' ';
+		}
+		if (byte >= 0x80) {
+			ch = '?';
+		}
+		if (out.size() + 1 > max_len) {
+			break;
+		}
+		out.push_back(ch);
+	}
+	return out;
+}
 
 std::string make_client_id() {
 	const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
