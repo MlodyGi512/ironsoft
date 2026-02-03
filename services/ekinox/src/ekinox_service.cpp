@@ -165,6 +165,8 @@ EkinoxService::EkinoxService(EkinoxConfig config)
 	} else {
 		rest_poll_interval_ = std::clamp(half, min_poll, max_poll);
 	}
+	std::cout << "[ekinox] timers presence_timeout_ms=" << presence_timeout_.count()
+		<< " rest_poll_interval_ms=" << rest_poll_interval_.count() << '\n';
 }
 
 EkinoxService::~EkinoxService() {
@@ -185,20 +187,20 @@ bool EkinoxService::run(std::atomic_bool& stop_flag) {
 
 	while (!stop_flag.load()) {
 		auto now = steady_clock::now();
+		const auto now_ms = mono_ms(now);
 		ensure_connection(now);
 
 		if (connected_) {
 			drain_commands();
 			ensure_sensor_session(now);
 			poll_sensor(now);
-			refresh_rest_health(now);
-			const auto now_ms = mono_ms();
-			if (next_rest_poll_ms_ == 0) {
-				next_rest_poll_ms_ = now_ms + static_cast<std::uint64_t>(rest_poll_interval_.count());
+			refresh_rest_health(now, now_ms);
+			if (next_rest_poll_ms_ <= 0) {
+				next_rest_poll_ms_ = now_ms + static_cast<std::int64_t>(rest_poll_interval_.count());
 			}
 			if (now_ms >= next_rest_poll_ms_) {
 				request_logger_state("poll.timer");
-				next_rest_poll_ms_ = mono_ms() + static_cast<std::uint64_t>(rest_poll_interval_.count());
+				next_rest_poll_ms_ = now_ms + static_cast<std::int64_t>(rest_poll_interval_.count());
 			}
 
 			if (now >= next_status_pub_) {
@@ -241,10 +243,11 @@ void EkinoxService::connection_lost(const std::string& cause) {
 	sensor_connected_ = false;
 	sensor_reconnect_needed_ = false;
 	const auto now = steady_clock::now();
-	update_link_health(now);
+	const auto now_ms = mono_ms(now);
+	update_link_health(now_ms);
 	set_state(ServiceState::kDisconnected);
 	next_reconnect_attempt_ = now;
-	update_presence_state(now, "mqtt offline");
+	update_presence_state(now_ms, "mqtt offline");
 }
 
 void EkinoxService::message_arrived(mqtt::const_message_ptr msg) {
@@ -300,9 +303,10 @@ bool EkinoxService::connect_once() {
 		last_presence_emit_ts_ms_ = 0;
 		sensor_reconnect_needed_ = false;
 		last_rest_error_.clear();
-		next_rest_poll_ms_ = mono_ms() + static_cast<std::uint64_t>(rest_poll_interval_.count());
+		next_rest_poll_ms_ = mono_ms() + static_cast<std::int64_t>(rest_poll_interval_.count());
 		set_state(ServiceState::kConnecting);
-		update_presence_state(steady_clock::now(), "connecting");
+		const auto now = steady_clock::now();
+		update_presence_state(mono_ms(now), "connecting");
 		publish_status();
 		std::cout << "[ekinox] Connected" << '\n';
 		request_logger_state("connect.selftest");
@@ -354,8 +358,9 @@ void EkinoxService::publish_presence(bool online, const std::string& reason) {
 	const std::string sanitized_reason = sanitize_and_clip(reason);
 	const auto now_ms = mono_ms();
 	const bool same_state = (presence_online_ == online);
-	const bool rate_limited = same_state && (last_presence_emit_ts_ms_ != 0) &&
-		((now_ms - last_presence_emit_ts_ms_) < static_cast<std::uint64_t>(kPresenceMinPublishInterval.count()));
+	const auto min_interval_ms = static_cast<std::int64_t>(kPresenceMinPublishInterval.count());
+	const bool rate_limited = same_state && (last_presence_emit_ts_ms_ > 0) &&
+		((now_ms - last_presence_emit_ts_ms_) < min_interval_ms);
 	if (!connected_) {
 		presence_.online = online;
 		presence_.reason = sanitized_reason;
@@ -555,8 +560,9 @@ void EkinoxService::handle_logger_start(const std::string& id, const std::string
 	if (!validate_rest_endpoint(rest_reason)) {
 		set_error(rest_reason);
 		const auto now = steady_clock::now();
-		update_link_health(now);
-		update_presence_state(now, rest_reason);
+		const auto now_ms = mono_ms(now);
+		update_link_health(now_ms);
+		update_presence_state(now_ms, rest_reason);
 		publish_status();
 		send_ack(id, type, false, rest_reason, "bad_config", 400);
 		return;
@@ -625,8 +631,9 @@ void EkinoxService::handle_logger_stop(const std::string& id, const std::string&
 	if (!validate_rest_endpoint(rest_reason)) {
 		set_error(rest_reason);
 		const auto now = steady_clock::now();
-		update_link_health(now);
-		update_presence_state(now, rest_reason);
+		const auto now_ms = mono_ms(now);
+		update_link_health(now_ms);
+		update_presence_state(now_ms, rest_reason);
 		publish_status();
 		send_ack(id, type, false, rest_reason, "bad_config", 400);
 		return;
@@ -702,8 +709,9 @@ void EkinoxService::handle_logger_status(const std::string& id, const std::strin
 	if (!validate_rest_endpoint(rest_reason)) {
 		set_error(rest_reason);
 		const auto now = steady_clock::now();
-		update_link_health(now);
-		update_presence_state(now, rest_reason);
+		const auto now_ms = mono_ms(now);
+		update_link_health(now_ms);
+		update_presence_state(now_ms, rest_reason);
 		publish_status();
 		send_ack(id, type, false, rest_reason, "bad_config", 400);
 		return;
@@ -767,7 +775,7 @@ bool EkinoxService::validate_rest_endpoint(std::string& err) const {
 
 void EkinoxService::mark_rest_result(const LoggerResult& result, const std::string& context_reason) {
 	const auto now = steady_clock::now();
-	const auto now_ms = mono_ms();
+	const auto now_ms = mono_ms(now);
 	const bool rest_success = result.ok && (result.http_code >= 200) && (result.http_code < 300);
 	if (rest_success) {
 		rest_alive_ = true;
@@ -779,8 +787,8 @@ void EkinoxService::mark_rest_result(const LoggerResult& result, const std::stri
 			++rest_success_streak_;
 		}
 		last_rest_error_.clear();
-		update_link_health(now);
-		update_presence_state(now);
+		update_link_health(now_ms);
+		update_presence_state(now_ms);
 		return;
 	}
 	rest_success_streak_ = 0;
@@ -790,9 +798,7 @@ void EkinoxService::mark_rest_result(const LoggerResult& result, const std::stri
 		++rest_fail_streak_;
 	}
 	const bool offline = rest_offline_condition(now_ms);
-	const std::uint64_t age_since_ok = (last_rest_ok_ts_ms_ == 0)
-		? std::numeric_limits<std::uint64_t>::max()
-		: (now_ms - last_rest_ok_ts_ms_);
+	const std::int64_t age_since_ok = rest_age_ms(now_ms);
 	std::cout << "[rest] fail context=" << context_reason
 		<< " streak=" << rest_fail_streak_
 		<< " now=" << now_ms
@@ -801,20 +807,18 @@ void EkinoxService::mark_rest_result(const LoggerResult& result, const std::stri
 		<< " offline_decision=" << (offline ? 1 : 0)
 		<< " reason='" << (last_rest_error_.empty() ? context_reason : last_rest_error_) << "'" << '\n';
 	rest_alive_ = !offline;
-	update_link_health(now);
+	update_link_health(now_ms);
 	if (offline) {
-		update_presence_state(now);
+		update_presence_state(now_ms);
 	}
 }
 
-void EkinoxService::update_link_health(time_point now) {
-	const auto now_ms = ToMillis(now);
+void EkinoxService::update_link_health(std::int64_t now_ms) {
 	status_.api_ok = !rest_offline_condition(now_ms);
 	status_.link_alive = sensor_connected_ && udp_link_alive_;
 }
 
-void EkinoxService::refresh_rest_health(time_point now) {
-	const auto now_ms = ToMillis(now);
+void EkinoxService::refresh_rest_health(time_point now, std::int64_t now_ms) {
 	const bool offline = rest_offline_condition(now_ms);
 	if (!offline) {
 		if (!rest_alive_) {
@@ -825,9 +829,7 @@ void EkinoxService::refresh_rest_health(time_point now) {
 	if (!rest_alive_) {
 		return;
 	}
-	const std::uint64_t age_since_ok = (last_rest_ok_ts_ms_ == 0)
-		? std::numeric_limits<std::uint64_t>::max()
-		: (now_ms - last_rest_ok_ts_ms_);
+	const std::int64_t age_since_ok = rest_age_ms(now_ms);
 	std::cout << "[rest] timeout now=" << now_ms
 		<< " last_ok=" << last_rest_ok_ts_ms_
 		<< " age=" << age_since_ok
@@ -837,21 +839,18 @@ void EkinoxService::refresh_rest_health(time_point now) {
 	if (last_rest_error_.empty()) {
 		last_rest_error_ = "rest timeout";
 	}
-	update_link_health(now);
-	update_presence_state(now);
+	update_link_health(now_ms);
+	update_presence_state(now_ms);
 }
 
 void EkinoxService::set_udp_link_alive(bool alive) {
 	udp_link_alive_ = alive;
-	update_link_health(steady_clock::now());
+	update_link_health(mono_ms());
 }
 
-void EkinoxService::update_presence_state(time_point now, const std::string& reason_override) {
-	const auto now_ms = ToMillis(now);
-	const auto timeout_ms = static_cast<std::uint64_t>(presence_timeout_.count());
-	const std::uint64_t age = (last_rest_ok_ts_ms_ == 0)
-		? std::numeric_limits<std::uint64_t>::max()
-		: (now_ms - last_rest_ok_ts_ms_);
+void EkinoxService::update_presence_state(std::int64_t now_ms, const std::string& reason_override) {
+	const auto timeout_ms = static_cast<std::int64_t>(presence_timeout_.count());
+	const std::int64_t age = rest_age_ms(now_ms);
 	const bool rest_ok = !rest_offline_condition(now_ms);
 	const bool rest_ready = rest_ok && (rest_success_streak_ >= 2);
 	const bool should_online = connected_ && rest_ready;
@@ -876,6 +875,12 @@ void EkinoxService::update_presence_state(time_point now, const std::string& rea
 		<< " recording=" << (status_.recording_active ? 1 : 0)
 		<< " decision=" << (should_online ? "ONLINE" : "OFFLINE")
 		<< " reason='" << (log_reason.empty() ? "-" : log_reason) << "'" << '\n';
+	if (last_rest_ok_ts_ms_ > 0 && age > timeout_ms * 10) {
+		std::cerr << "[presence][warn] suspicious rest age now=" << now_ms
+			<< " last_ok=" << last_rest_ok_ts_ms_
+			<< " age=" << age
+			<< " timeout=" << timeout_ms << '\n';
+	}
 	publish_presence(should_online, reason);
 }
 
@@ -982,7 +987,7 @@ void EkinoxService::ensure_sensor_session(time_point now) {
 #else
 	sensor_connected_ = false;
 	udp_link_alive_ = false;
-	update_link_health(now);
+	update_link_health(mono_ms(now));
 	if (!reported_no_sbg_) {
 		reported_no_sbg_ = true;
 		set_error("sbgECom unavailable");
@@ -1089,20 +1094,29 @@ int EkinoxService::wait_for_token_rc(const mqtt::token_ptr& tok) const {
 	return tok->get_return_code();
 }
 
-std::uint64_t EkinoxService::mono_ms() {
-	return ToMillis(steady_clock::now());
+std::int64_t EkinoxService::mono_ms() {
+	return mono_ms(steady_clock::now());
 }
 
-std::uint64_t EkinoxService::ToMillis(time_point tp) {
-	return static_cast<std::uint64_t>(
-		std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()).count());
+std::int64_t EkinoxService::mono_ms(time_point tp) {
+	return std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()).count();
 }
 
-bool EkinoxService::rest_offline_condition(std::uint64_t now_ms) const {
-	const auto timeout_ms = static_cast<std::uint64_t>(presence_timeout_.count());
-	const std::uint64_t age_ms = (last_rest_ok_ts_ms_ == 0)
-		? std::numeric_limits<std::uint64_t>::max()
-		: (now_ms - last_rest_ok_ts_ms_);
+std::int64_t EkinoxService::rest_age_ms(std::int64_t now_ms) const {
+	if (last_rest_ok_ts_ms_ <= 0) {
+		return std::numeric_limits<std::int64_t>::max();
+	}
+	if (now_ms < last_rest_ok_ts_ms_) {
+		std::cerr << "[rest][warn] monotonic regression now=" << now_ms
+			<< " last_ok=" << last_rest_ok_ts_ms_ << '\n';
+		return 0;
+	}
+	return now_ms - last_rest_ok_ts_ms_;
+}
+
+bool EkinoxService::rest_offline_condition(std::int64_t now_ms) const {
+	const auto timeout_ms = static_cast<std::int64_t>(presence_timeout_.count());
+	const std::int64_t age_ms = rest_age_ms(now_ms);
 	if (rest_fail_streak_ >= 3) {
 		return true;
 	}
