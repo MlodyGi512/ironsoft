@@ -903,6 +903,22 @@ LoggerResult EkinoxService::request_logger_state(const std::string& context_reas
 		}
 		return result;
 	}
+	std::string err = rest_error_or_http(result);
+	if (err.empty()) {
+		err = context_reason;
+	}
+	if (!err.empty()) {
+		set_error(err);
+	}
+	if (result.http_code == 404) {
+		status_.recording_active = false;
+		status_.session_name.clear();
+		set_state(ServiceState::kIdle);
+	} else {
+		set_state(ServiceState::kError);
+	}
+	return result;
+}
 
 void EkinoxService::handle_sensor_rx_timeout(std::int64_t age_ms, bool recording, std::int64_t now_ms) {
 	const auto fail_threshold = std::max(1, config_.timeouts.udp_rx_fail_threshold);
@@ -959,22 +975,6 @@ void EkinoxService::clear_rx_timeout_error() {
 		status_.last_error.clear();
 		status_.last_error_ts = unix_ts();
 	}
-}
-	std::string err = rest_error_or_http(result);
-	if (err.empty()) {
-		err = context_reason;
-	}
-	if (!err.empty()) {
-		set_error(err);
-	}
-	if (result.http_code == 404) {
-		status_.recording_active = false;
-		status_.session_name.clear();
-		set_state(ServiceState::kIdle);
-	} else {
-		set_state(ServiceState::kError);
-	}
-	return result;
 }
 
 std::string EkinoxService::generate_session_name() const {
