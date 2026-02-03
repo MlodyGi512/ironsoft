@@ -31,6 +31,9 @@ struct RestApiConfig {
 
 struct EkinoxTimeouts {
 	int rx_dead_ms = 1500;
+	int udp_rx_timeout_ms = 5000;
+	int udp_rx_fail_threshold = 3;
+	int udp_rx_ok_to_clear_threshold = 2;
 	int start_timeout_ms = 10000;
 	int stop_timeout_ms = 10000;
 	int reconnect_backoff_ms = 250;

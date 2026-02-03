@@ -163,6 +163,15 @@ bool loadEkinoxConfig(const std::string& path, EkinoxConfig& cfg, std::string& e
 		if (!read_timeout("rx_dead_ms", cfg.timeouts.rx_dead_ms)) {
 			return false;
 		}
+		if (!read_timeout("udp_rx_timeout_ms", cfg.timeouts.udp_rx_timeout_ms)) {
+			return false;
+		}
+		if (!read_timeout("udp_rx_fail_threshold", cfg.timeouts.udp_rx_fail_threshold)) {
+			return false;
+		}
+		if (!read_timeout("udp_rx_ok_to_clear_threshold", cfg.timeouts.udp_rx_ok_to_clear_threshold)) {
+			return false;
+		}
 		if (!read_timeout("start_timeout_ms", cfg.timeouts.start_timeout_ms)) {
 			return false;
 		}

@@ -25,13 +25,12 @@ bool EkinoxUdpSession::is_connected() const noexcept {
 	return connected_;
 }
 
-std::int64_t EkinoxUdpSession::last_rx_age_ms(std::chrono::steady_clock::time_point now) const noexcept {
+std::int64_t EkinoxUdpSession::last_rx_age_ms(std::int64_t now_ms) const noexcept {
 	const auto last = last_rx_ms_.load(std::memory_order_relaxed);
 	if (last == 0) {
 		return std::numeric_limits<std::int64_t>::max();
 	}
-	const auto now_value = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-	return now_value - last;
+	return now_ms - last;
 }
 
 #if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)

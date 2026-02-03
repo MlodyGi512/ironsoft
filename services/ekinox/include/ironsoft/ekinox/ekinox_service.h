@@ -75,6 +75,9 @@ private:
 	std::int64_t rest_age_ms(std::int64_t now_ms) const;
 	bool rest_offline_condition(std::int64_t now_ms) const;
 	LoggerResult request_logger_state(const std::string& context_reason, std::int64_t now_ms);
+	void handle_sensor_rx_timeout(std::int64_t age_ms, bool recording, std::int64_t now_ms);
+	void handle_sensor_rx_recovered(std::int64_t now_ms);
+	void clear_rx_timeout_error();
 	std::string generate_session_name() const;
 	std::string extract_session_name(const Json::Value& cmd) const;
 	void set_state(ServiceState state);
@@ -83,8 +86,6 @@ private:
 	std::int64_t unix_ts() const;
 	int wait_for_token_rc(const mqtt::token_ptr& tok) const;
 
-private:
-	static constexpr int kRxTimeoutStrikesToReconnect = 5;
 
 	EkinoxConfig config_;
 	EkinoxTopics topics_;
@@ -109,7 +110,8 @@ private:
 	bool connected_ = false;
 	bool presence_online_ = false;
 	bool sensor_connected_ = false;
-	int rx_timeout_strikes_ = 0;
+	int rx_fail_streak_ = 0;
+	int rx_ok_streak_ = 0;
 	bool udp_link_alive_ = false;
 	bool rest_alive_ = false;
 	time_point last_rest_success_{};
@@ -133,6 +135,7 @@ private:
 	std::chrono::milliseconds rest_poll_interval_{2000};
 	int rest_success_streak_ = 0;
 	std::unique_ptr<EkinoxUdpSession> udp_session_;
+	bool rx_timeout_error_active_ = false;
 };
 
 }  // namespace ironsoft::ekinox

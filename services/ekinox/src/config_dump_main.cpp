@@ -38,6 +38,9 @@ int main(int argc, char** argv) {
 	std::cout << "REST API: base='" << config.rest_api.base_path << "' datalogger='" << config.rest_api.datalogger_path << "'" << '\n';
 	std::cout << "Timeouts: rx_dead=" << config.timeouts.rx_dead_ms << "ms start=" << config.timeouts.start_timeout_ms
 	          << "ms stop=" << config.timeouts.stop_timeout_ms << "ms" << '\n';
+	std::cout << "  udp_rx_timeout=" << config.timeouts.udp_rx_timeout_ms << "ms"
+		<< " udp_rx_fail_threshold=" << config.timeouts.udp_rx_fail_threshold
+		<< " udp_rx_ok_to_clear_threshold=" << config.timeouts.udp_rx_ok_to_clear_threshold << '\n';
 	std::cout << "  reconnect_backoff=" << config.timeouts.reconnect_backoff_ms << "ms max=" << config.timeouts.reconnect_backoff_max_ms << "ms" << '\n';
 
 	return 0;

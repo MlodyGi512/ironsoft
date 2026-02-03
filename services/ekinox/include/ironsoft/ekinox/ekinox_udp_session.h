@@ -31,7 +31,7 @@ public:
 	void close();
 	bool poll(std::string& err);
 	bool is_connected() const noexcept;
-	std::int64_t last_rx_age_ms(std::chrono::steady_clock::time_point now) const noexcept;
+	std::int64_t last_rx_age_ms(std::int64_t now_ms) const noexcept;
 #if defined(DEKINOX_HAS_SBG) && (DEKINOX_HAS_SBG == 1)
 	SbgEComHandle* ecom_handle() noexcept;
 #endif

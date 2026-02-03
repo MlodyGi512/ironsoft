@@ -14,6 +14,9 @@
   },
   "timeouts": {
     "rx_dead_ms": 1500,
+    "udp_rx_timeout_ms": 5000,
+    "udp_rx_fail_threshold": 3,
+    "udp_rx_ok_to_clear_threshold": 2,
     "start_timeout_ms": 10000,
     "stop_timeout_ms": 10000,
     "reconnect_backoff_ms": 250,

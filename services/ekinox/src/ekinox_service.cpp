@@ -166,7 +166,10 @@ EkinoxService::EkinoxService(EkinoxConfig config)
 		rest_poll_interval_ = std::clamp(half, min_poll, max_poll);
 	}
 	std::cout << "[ekinox] timers presence_timeout_ms=" << presence_timeout_.count()
-		<< " rest_poll_interval_ms=" << rest_poll_interval_.count() << '\n';
+		<< " rest_poll_interval_ms=" << rest_poll_interval_.count()
+		<< " udp_rx_timeout_ms=" << config_.timeouts.udp_rx_timeout_ms
+		<< " udp_rx_fail_threshold=" << config_.timeouts.udp_rx_fail_threshold
+		<< " udp_rx_ok_to_clear_threshold=" << config_.timeouts.udp_rx_ok_to_clear_threshold << '\n';
 }
 
 EkinoxService::~EkinoxService() {
@@ -900,6 +903,63 @@ LoggerResult EkinoxService::request_logger_state(const std::string& context_reas
 		}
 		return result;
 	}
+
+void EkinoxService::handle_sensor_rx_timeout(std::int64_t age_ms, bool recording, std::int64_t now_ms) {
+	const auto fail_threshold = std::max(1, config_.timeouts.udp_rx_fail_threshold);
+	if (rx_fail_streak_ < std::numeric_limits<int>::max()) {
+		++rx_fail_streak_;
+	}
+	rx_ok_streak_ = 0;
+	udp_link_alive_ = false;
+	std::cout << "[ekinox] sensor rx timeout detected age=" << age_ms
+		<< "ms fail_streak=" << rx_fail_streak_
+		<< "/" << fail_threshold << '\n';
+	update_link_health(now_ms);
+	if (rx_fail_streak_ >= fail_threshold && !rx_timeout_error_active_) {
+		set_error("rx timeout");
+	}
+	if (rx_fail_streak_ < fail_threshold) {
+		return;
+	}
+	if (recording) {
+		if (!sensor_reconnect_needed_) {
+			std::cout << "[ekinox] sensor rx timeout threshold reached during recording – deferring reconnect" << '\n';
+			sensor_reconnect_needed_ = true;
+		}
+		return;
+	}
+	std::cout << "[ekinox] sensor rx timeout threshold reached – reconnecting" << '\n';
+	handle_sensor_disconnect("rx timeout");
+}
+
+void EkinoxService::handle_sensor_rx_recovered(std::int64_t now_ms) {
+	const auto ok_threshold = std::max(1, config_.timeouts.udp_rx_ok_to_clear_threshold);
+	udp_link_alive_ = true;
+	if (rx_ok_streak_ < std::numeric_limits<int>::max()) {
+		++rx_ok_streak_;
+	}
+	if (rx_ok_streak_ >= ok_threshold && rx_fail_streak_ != 0) {
+		std::cout << "[ekinox] sensor rx timeout cleared after fail_streak=" << rx_fail_streak_ << '\n';
+		rx_fail_streak_ = 0;
+		clear_rx_timeout_error();
+	}
+	if (sensor_reconnect_needed_) {
+		std::cout << "[ekinox] sensor rx recovered, cancelling deferred reconnect" << '\n';
+		sensor_reconnect_needed_ = false;
+	}
+	update_link_health(now_ms);
+}
+
+void EkinoxService::clear_rx_timeout_error() {
+	if (!rx_timeout_error_active_) {
+		return;
+	}
+	rx_timeout_error_active_ = false;
+	if (status_.last_error == "rx timeout") {
+		status_.last_error.clear();
+		status_.last_error_ts = unix_ts();
+	}
+}
 	std::string err = rest_error_or_http(result);
 	if (err.empty()) {
 		err = context_reason;
@@ -980,8 +1040,9 @@ void EkinoxService::ensure_sensor_session(time_point now) {
 		return;
 	}
 	sensor_connected_ = true;
-	rx_timeout_strikes_ = 0;
-	set_udp_link_alive(true);
+	rx_fail_streak_ = 0;
+	rx_ok_streak_ = 0;
+	clear_rx_timeout_error();
 	current_backoff_ms_ = config_.timeouts.reconnect_backoff_ms;
 	next_sensor_attempt_.reset();
 #else
@@ -999,6 +1060,7 @@ void EkinoxService::poll_sensor(time_point now) {
 	if (!sensor_connected_ || !udp_session_) {
 		return;
 	}
+	const auto now_ms = mono_ms(now);
 	const bool recording = (status_.state == ServiceState::kRecording) || status_.recording_active;
 	if (sensor_reconnect_needed_ && !recording) {
 		std::cout << "[ekinox] sensor deferred reconnect (recording finished)" << '\n';
@@ -1008,41 +1070,20 @@ void EkinoxService::poll_sensor(time_point now) {
 	}
 	std::string err;
 	if (!udp_session_->poll(err)) {
-		rx_timeout_strikes_ = 0;
+		rx_fail_streak_ = 0;
+		rx_ok_streak_ = 0;
+		clear_rx_timeout_error();
 		handle_sensor_error(err);
 		return;
 	}
-	const auto age = udp_session_->last_rx_age_ms(now);
-	const auto rx_dead_ms = static_cast<std::int64_t>(config_.timeouts.rx_dead_ms);
-	if (age > rx_dead_ms) {
-		++rx_timeout_strikes_;
-		if (rx_timeout_strikes_ == 1) {
-			std::cout << "[ekinox] sensor rx timeout detected (age=" << age << "ms)" << '\n';
-			set_error("rx timeout");
-		}
-		set_udp_link_alive(false);
-		if (recording) {
-			if (rx_timeout_strikes_ >= kRxTimeoutStrikesToReconnect && !sensor_reconnect_needed_) {
-				std::cout << "[ekinox] sensor rx timeout strikes=" << rx_timeout_strikes_ << " (recording) – deferring reconnect" << '\n';
-				sensor_reconnect_needed_ = true;
-			}
-			return;
-		}
-		if (rx_timeout_strikes_ >= kRxTimeoutStrikesToReconnect) {
-			std::cout << "[ekinox] sensor rx timeout strikes=" << rx_timeout_strikes_ << " reconnecting" << '\n';
-			handle_sensor_disconnect("rx timeout");
-		}
+	const auto raw_age = udp_session_->last_rx_age_ms(now_ms);
+	const auto age = std::max<std::int64_t>(raw_age, 0);
+	const auto timeout_ms = static_cast<std::int64_t>(config_.timeouts.udp_rx_timeout_ms);
+	if (age <= timeout_ms) {
+		handle_sensor_rx_recovered(now_ms);
 		return;
 	}
-	if (rx_timeout_strikes_ > 0) {
-		std::cout << "[ekinox] sensor rx timeout cleared after strikes=" << rx_timeout_strikes_ << '\n';
-	}
-	rx_timeout_strikes_ = 0;
-	if (sensor_reconnect_needed_) {
-		std::cout << "[ekinox] sensor rx recovered, cancelling deferred reconnect" << '\n';
-		sensor_reconnect_needed_ = false;
-	}
-	set_udp_link_alive(true);
+	handle_sensor_rx_timeout(age, recording, now_ms);
 }
 
 void EkinoxService::handle_sensor_error(const std::string& reason) {
@@ -1051,7 +1092,9 @@ void EkinoxService::handle_sensor_error(const std::string& reason) {
 }
 
 void EkinoxService::handle_sensor_disconnect(const std::string& reason) {
-	rx_timeout_strikes_ = 0;
+	rx_fail_streak_ = 0;
+	rx_ok_streak_ = 0;
+	clear_rx_timeout_error();
 	if (udp_session_) {
 		udp_session_->close();
 	}
@@ -1073,6 +1116,7 @@ void EkinoxService::set_state(ServiceState state) {
 void EkinoxService::set_error(const std::string& message) {
 	status_.last_error = sanitize_and_clip(message);
 	status_.last_error_ts = unix_ts();
+	rx_timeout_error_active_ = (status_.last_error == "rx timeout");
 }
 
 std::string EkinoxService::serialize_json(const Json::Value& value) const {
