@@ -194,12 +194,12 @@ bool EkinoxService::run(std::atomic_bool& stop_flag) {
 			drain_commands();
 			ensure_sensor_session(now);
 			poll_sensor(now);
-			refresh_rest_health(now, now_ms);
+			refresh_rest_health(now_ms);
 			if (next_rest_poll_ms_ <= 0) {
 				next_rest_poll_ms_ = now_ms + static_cast<std::int64_t>(rest_poll_interval_.count());
 			}
 			if (now_ms >= next_rest_poll_ms_) {
-				request_logger_state("poll.timer");
+				request_logger_state("poll.timer", now_ms);
 				next_rest_poll_ms_ = now_ms + static_cast<std::int64_t>(rest_poll_interval_.count());
 			}
 
@@ -309,7 +309,7 @@ bool EkinoxService::connect_once() {
 		update_presence_state(mono_ms(now), "connecting");
 		publish_status();
 		std::cout << "[ekinox] Connected" << '\n';
-		request_logger_state("connect.selftest");
+		request_logger_state("connect.selftest", mono_ms());
 		publish_status();
 		return true;
 	} catch (const mqtt::exception& ex) {
@@ -567,7 +567,7 @@ void EkinoxService::handle_logger_start(const std::string& id, const std::string
 		send_ack(id, type, false, rest_reason, "bad_config", 400);
 		return;
 	}
-	LoggerResult pre_status = request_logger_state("logger.start.precheck");
+	LoggerResult pre_status = request_logger_state("logger.start.precheck", mono_ms());
 	publish_status();
 	if (result_reports_recording(pre_status)) {
 		send_ack(id, type, true, "already recording", "", http_code_or_default(pre_status, 200));
@@ -580,11 +580,11 @@ void EkinoxService::handle_logger_start(const std::string& id, const std::string
 	set_state(ServiceState::kStarting);
 	publish_status();
 	LoggerResult start_result = EkinoxLoggerApi::dataLoggerStart(config_, config_.rest_api, session_name);
-	mark_rest_result(start_result, "logger.start");
+	mark_rest_result(start_result, "logger.start", mono_ms());
 	const int start_http_code = http_code_or_default(start_result, 500);
 	if (!start_result.ok) {
 		if (start_result.http_code == 409) {
-			LoggerResult conflict_state = request_logger_state("logger.start.conflict");
+			LoggerResult conflict_state = request_logger_state("logger.start.conflict", mono_ms());
 			publish_status();
 			send_ack(id, type, true, "already recording", "", start_http_code);
 			return;
@@ -600,9 +600,9 @@ void EkinoxService::handle_logger_start(const std::string& id, const std::string
 		send_ack(id, type, false, "start failed", err, start_http_code);
 		return;
 	}
-	LoggerResult verify_now = request_logger_state("logger.start.verify.now");
+	LoggerResult verify_now = request_logger_state("logger.start.verify.now", mono_ms());
 	std::this_thread::sleep_for(kVerificationDelay);
-	LoggerResult verify_later = request_logger_state("logger.start.verify.later");
+	LoggerResult verify_later = request_logger_state("logger.start.verify.later", mono_ms());
 	const bool confirmed = logger_state_matches(verify_now, true) || logger_state_matches(verify_later, true);
 	publish_status();
 	if (confirmed) {
@@ -638,7 +638,7 @@ void EkinoxService::handle_logger_stop(const std::string& id, const std::string&
 		send_ack(id, type, false, rest_reason, "bad_config", 400);
 		return;
 	}
-	LoggerResult pre_status = request_logger_state("logger.stop.precheck");
+	LoggerResult pre_status = request_logger_state("logger.stop.precheck", mono_ms());
 	publish_status();
 	if (result_reports_idle(pre_status)) {
 		status_.session_name.clear();
@@ -650,11 +650,11 @@ void EkinoxService::handle_logger_stop(const std::string& id, const std::string&
 	set_state(ServiceState::kStopping);
 	publish_status();
 	LoggerResult stop_result = EkinoxLoggerApi::dataLoggerStop(config_, config_.rest_api);
-	mark_rest_result(stop_result, "logger.stop");
+	mark_rest_result(stop_result, "logger.stop", mono_ms());
 	const int stop_http_code = http_code_or_default(stop_result, 500);
 	if (!stop_result.ok) {
 		if (stop_result.http_code == 500 || stop_result.http_code == 409) {
-			LoggerResult retry_state = request_logger_state("logger.stop.post_error");
+			LoggerResult retry_state = request_logger_state("logger.stop.post_error", mono_ms());
 			publish_status();
 			if (result_reports_idle(retry_state)) {
 				status_.session_name.clear();
@@ -675,9 +675,9 @@ void EkinoxService::handle_logger_stop(const std::string& id, const std::string&
 		send_ack(id, type, false, "stop failed", err, stop_http_code);
 		return;
 	}
-	LoggerResult verify_now = request_logger_state("logger.stop.verify.now");
+	LoggerResult verify_now = request_logger_state("logger.stop.verify.now", mono_ms());
 	std::this_thread::sleep_for(kVerificationDelay);
-	LoggerResult verify_later = request_logger_state("logger.stop.verify.later");
+	LoggerResult verify_later = request_logger_state("logger.stop.verify.later", mono_ms());
 	const bool confirmed = logger_state_matches(verify_now, false) || logger_state_matches(verify_later, false);
 	if (confirmed) {
 		status_.session_name.clear();
@@ -716,7 +716,7 @@ void EkinoxService::handle_logger_status(const std::string& id, const std::strin
 		send_ack(id, type, false, rest_reason, "bad_config", 400);
 		return;
 	}
-	LoggerResult result = request_logger_state("logger.status.cmd");
+	LoggerResult result = request_logger_state("logger.status.cmd", mono_ms());
 	publish_status();
 	if (result.ok) {
 		const std::string message = !result.message.empty() ? result.message : (status_.recording_active ? "recording active" : "recording inactive");
@@ -773,9 +773,10 @@ bool EkinoxService::validate_rest_endpoint(std::string& err) const {
 	return true;
 }
 
-void EkinoxService::mark_rest_result(const LoggerResult& result, const std::string& context_reason) {
+void EkinoxService::mark_rest_result(const LoggerResult& result,
+	const std::string& context_reason,
+	std::int64_t now_ms) {
 	const auto now = steady_clock::now();
-	const auto now_ms = mono_ms(now);
 	const bool rest_success = result.ok && (result.http_code >= 200) && (result.http_code < 300);
 	if (rest_success) {
 		rest_alive_ = true;
@@ -791,12 +792,11 @@ void EkinoxService::mark_rest_result(const LoggerResult& result, const std::stri
 		update_presence_state(now_ms);
 		return;
 	}
-	rest_success_streak_ = 0;
-	last_rest_error_ = !result.error_string.empty() ? result.error_string : context_reason;
-	const bool severe_failure = (result.http_code >= 500) || (result.http_code == 0);
-	if (severe_failure) {
+	if (rest_fail_streak_ < std::numeric_limits<int>::max()) {
 		++rest_fail_streak_;
 	}
+	rest_success_streak_ = 0;
+	last_rest_error_ = !result.error_string.empty() ? result.error_string : context_reason;
 	const bool offline = rest_offline_condition(now_ms);
 	const std::int64_t age_since_ok = rest_age_ms(now_ms);
 	std::cout << "[rest] fail context=" << context_reason
@@ -818,7 +818,7 @@ void EkinoxService::update_link_health(std::int64_t now_ms) {
 	status_.link_alive = sensor_connected_ && udp_link_alive_;
 }
 
-void EkinoxService::refresh_rest_health(time_point now, std::int64_t now_ms) {
+void EkinoxService::refresh_rest_health(std::int64_t now_ms) {
 	const bool offline = rest_offline_condition(now_ms);
 	if (!offline) {
 		if (!rest_alive_) {
@@ -851,16 +851,16 @@ void EkinoxService::set_udp_link_alive(bool alive) {
 void EkinoxService::update_presence_state(std::int64_t now_ms, const std::string& reason_override) {
 	const auto timeout_ms = static_cast<std::int64_t>(presence_timeout_.count());
 	const std::int64_t age = rest_age_ms(now_ms);
-	const bool rest_ok = !rest_offline_condition(now_ms);
-	const bool rest_ready = rest_ok && (rest_success_streak_ >= 2);
-	const bool should_online = connected_ && rest_ready;
+	const bool rest_offline = rest_offline_condition(now_ms);
+	const bool ready_for_online = (rest_success_streak_ >= 2) || presence_online_;
+	const bool should_online = connected_ && !rest_offline && ready_for_online;
 	std::string reason = reason_override;
 	if (!should_online && reason.empty()) {
 		if (!connected_) {
 			reason = "mqtt offline";
-		} else if (!rest_ok) {
+		} else if (rest_offline) {
 			reason = last_rest_error_.empty() ? "rest timeout" : last_rest_error_;
-		} else if (rest_success_streak_ < 2) {
+		} else {
 			reason = "rest hysteresis";
 		}
 	}
@@ -884,9 +884,9 @@ void EkinoxService::update_presence_state(std::int64_t now_ms, const std::string
 	publish_presence(should_online, reason);
 }
 
-LoggerResult EkinoxService::request_logger_state(const std::string& context_reason) {
+LoggerResult EkinoxService::request_logger_state(const std::string& context_reason, std::int64_t now_ms) {
 	LoggerResult result = EkinoxLoggerApi::dataLoggerGet(config_, config_.rest_api);
-	mark_rest_result(result, context_reason);
+	mark_rest_result(result, context_reason, now_ms);
 	if (result.ok) {
 		status_.last_error.clear();
 		if (result.has_recording_flag) {
@@ -1116,9 +1116,18 @@ std::int64_t EkinoxService::rest_age_ms(std::int64_t now_ms) const {
 
 bool EkinoxService::rest_offline_condition(std::int64_t now_ms) const {
 	const auto timeout_ms = static_cast<std::int64_t>(presence_timeout_.count());
-	const std::int64_t age_ms = rest_age_ms(now_ms);
 	if (rest_fail_streak_ >= 3) {
 		return true;
+	}
+	if (last_rest_ok_ts_ms_ <= 0) {
+		return true;
+	}
+	const std::int64_t age_ms = rest_age_ms(now_ms);
+	if (status_.recording_active) {
+		const auto recording_grace = timeout_ms * 3;
+		if (age_ms <= recording_grace) {
+			return false;
+		}
 	}
 	return age_ms > timeout_ms;
 }
