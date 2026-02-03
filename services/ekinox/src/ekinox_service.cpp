@@ -28,7 +28,7 @@ constexpr std::chrono::milliseconds kLoopSleep{50};
 constexpr std::chrono::seconds kStatusInterval{1};
 constexpr std::chrono::seconds kHeartbeatInterval{1};
 constexpr std::chrono::seconds kVerificationDelay{1};
-constexpr std::chrono::milliseconds kPresenceDefault{5000};
+constexpr std::chrono::milliseconds kPresenceDefault{10000};
 constexpr std::chrono::milliseconds kPresenceMinPublishInterval{2000};
 constexpr std::size_t kMaxErrorText{256};
 
@@ -158,10 +158,13 @@ EkinoxService::EkinoxService(EkinoxConfig config)
 	presence_timeout_ = std::chrono::milliseconds(presence_ms);
 	rest_alive_ttl_ = presence_timeout_;
 	const auto half = presence_timeout_ / 2;
-	rest_poll_interval_ = (half.count() > 0)
-		? std::max(std::chrono::milliseconds(500), half)
-		: std::chrono::milliseconds(500);
-	next_rest_poll_ = start_tp_;
+	const auto min_poll = std::chrono::milliseconds(1000);
+	const auto max_poll = std::chrono::milliseconds(2000);
+	if (half.count() <= 0) {
+		rest_poll_interval_ = min_poll;
+	} else {
+		rest_poll_interval_ = std::clamp(half, min_poll, max_poll);
+	}
 }
 
 EkinoxService::~EkinoxService() {
@@ -189,6 +192,14 @@ bool EkinoxService::run(std::atomic_bool& stop_flag) {
 			ensure_sensor_session(now);
 			poll_sensor(now);
 			refresh_rest_health(now);
+			const auto now_ms = mono_ms();
+			if (next_rest_poll_ms_ == 0) {
+				next_rest_poll_ms_ = now_ms + static_cast<std::uint64_t>(rest_poll_interval_.count());
+			}
+			if (now_ms >= next_rest_poll_ms_) {
+				request_logger_state("poll.timer");
+				next_rest_poll_ms_ = mono_ms() + static_cast<std::uint64_t>(rest_poll_interval_.count());
+			}
 
 			if (now >= next_status_pub_) {
 				publish_status();
@@ -199,6 +210,8 @@ bool EkinoxService::run(std::atomic_bool& stop_flag) {
 				publish_heartbeat(uptime);
 				next_heartbeat_pub_ = now + kHeartbeatInterval;
 			}
+		} else {
+			next_rest_poll_ms_ = 0;
 		}
 
 		std::this_thread::sleep_for(kLoopSleep);
@@ -220,6 +233,8 @@ void EkinoxService::connection_lost(const std::string& cause) {
 	connected_ = false;
 	presence_online_ = false;
 	status_.link_alive = false;
+	rest_success_streak_ = 0;
+	next_rest_poll_ms_ = 0;
 	if (udp_session_) {
 		udp_session_->close();
 	}
@@ -281,9 +296,11 @@ bool EkinoxService::connect_once() {
 		last_rest_ok_ = time_point{};
 		last_rest_ok_ts_ms_ = 0;
 		rest_fail_streak_ = 0;
+		rest_success_streak_ = 0;
 		last_presence_emit_ts_ms_ = 0;
 		sensor_reconnect_needed_ = false;
 		last_rest_error_.clear();
+		next_rest_poll_ms_ = mono_ms() + static_cast<std::uint64_t>(rest_poll_interval_.count());
 		set_state(ServiceState::kConnecting);
 		update_presence_state(steady_clock::now(), "connecting");
 		publish_status();
@@ -306,6 +323,8 @@ void EkinoxService::disconnect() {
 		client_.disconnect()->wait();
 		connected_ = false;
 		status_.link_alive = false;
+		rest_success_streak_ = 0;
+		next_rest_poll_ms_ = 0;
 		set_state(ServiceState::kDisconnected);
 	} catch (const mqtt::exception& ex) {
 		std::cerr << "[ekinox] disconnect failed: " << ex.what() << '\n';
@@ -756,11 +775,15 @@ void EkinoxService::mark_rest_result(const LoggerResult& result, const std::stri
 		last_rest_ok_ = now;
 		last_rest_ok_ts_ms_ = now_ms;
 		rest_fail_streak_ = 0;
+		if (rest_success_streak_ < std::numeric_limits<int>::max()) {
+			++rest_success_streak_;
+		}
 		last_rest_error_.clear();
 		update_link_health(now);
 		update_presence_state(now);
 		return;
 	}
+	rest_success_streak_ = 0;
 	last_rest_error_ = !result.error_string.empty() ? result.error_string : context_reason;
 	const bool severe_failure = (result.http_code >= 500) || (result.http_code == 0);
 	if (severe_failure) {
@@ -825,16 +848,34 @@ void EkinoxService::set_udp_link_alive(bool alive) {
 
 void EkinoxService::update_presence_state(time_point now, const std::string& reason_override) {
 	const auto now_ms = ToMillis(now);
+	const auto timeout_ms = static_cast<std::uint64_t>(presence_timeout_.count());
+	const std::uint64_t age = (last_rest_ok_ts_ms_ == 0)
+		? std::numeric_limits<std::uint64_t>::max()
+		: (now_ms - last_rest_ok_ts_ms_);
 	const bool rest_ok = !rest_offline_condition(now_ms);
-	const bool should_online = connected_ && rest_ok;
+	const bool rest_ready = rest_ok && (rest_success_streak_ >= 2);
+	const bool should_online = connected_ && rest_ready;
 	std::string reason = reason_override;
 	if (!should_online && reason.empty()) {
 		if (!connected_) {
 			reason = "mqtt offline";
 		} else if (!rest_ok) {
 			reason = last_rest_error_.empty() ? "rest timeout" : last_rest_error_;
+		} else if (rest_success_streak_ < 2) {
+			reason = "rest hysteresis";
 		}
 	}
+	const std::string log_reason = sanitize_and_clip(reason);
+	std::cout << "[presence] decision now=" << now_ms
+		<< " last_ok=" << last_rest_ok_ts_ms_
+		<< " age=" << age
+		<< " rest_fail=" << rest_fail_streak_
+		<< " rest_success=" << rest_success_streak_
+		<< " timeout=" << timeout_ms
+		<< " connected=" << (connected_ ? 1 : 0)
+		<< " recording=" << (status_.recording_active ? 1 : 0)
+		<< " decision=" << (should_online ? "ONLINE" : "OFFLINE")
+		<< " reason='" << (log_reason.empty() ? "-" : log_reason) << "'" << '\n';
 	publish_presence(should_online, reason);
 }
 
@@ -1057,21 +1098,15 @@ std::uint64_t EkinoxService::ToMillis(time_point tp) {
 		std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()).count());
 }
 
-bool EkinoxService::has_recent_rest(std::uint64_t now_ms) const {
-	if (last_rest_ok_ts_ms_ == 0) {
-		return false;
-	}
-	const std::uint64_t age_ms = now_ms - last_rest_ok_ts_ms_;
-	const auto window_ms = static_cast<std::uint64_t>(presence_timeout_.count());
-	return age_ms <= window_ms;
-}
-
 bool EkinoxService::rest_offline_condition(std::uint64_t now_ms) const {
-	const bool timeout_expired = !has_recent_rest(now_ms);
+	const auto timeout_ms = static_cast<std::uint64_t>(presence_timeout_.count());
+	const std::uint64_t age_ms = (last_rest_ok_ts_ms_ == 0)
+		? std::numeric_limits<std::uint64_t>::max()
+		: (now_ms - last_rest_ok_ts_ms_);
 	if (rest_fail_streak_ >= 3) {
 		return true;
 	}
-	return (rest_fail_streak_ >= 1) && timeout_expired;
+	return age_ms > timeout_ms;
 }
 
 }  // namespace ironsoft::ekinox

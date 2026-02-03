@@ -72,7 +72,6 @@ private:
 	void update_presence_state(time_point now, const std::string& reason_override = "");
 	static std::uint64_t mono_ms();
 	static std::uint64_t ToMillis(time_point tp);
-	bool has_recent_rest(std::uint64_t now_ms) const;
 	bool rest_offline_condition(std::uint64_t now_ms) const;
 	LoggerResult request_logger_state(const std::string& context_reason);
 	std::string generate_session_name() const;
@@ -122,7 +121,7 @@ private:
 	time_point start_tp_{};
 	time_point next_status_pub_{};
 	time_point next_heartbeat_pub_{};
-	time_point next_rest_poll_{};
+	std::uint64_t next_rest_poll_ms_ = 0;
 	int current_backoff_ms_ = 0;
 	bool reported_no_sbg_ = false;
 	EkinoxUdpSession::Config udp_config_{};
@@ -131,6 +130,7 @@ private:
 	std::chrono::milliseconds presence_timeout_{5000};
 	std::chrono::milliseconds rest_alive_ttl_{5000};
 	std::chrono::milliseconds rest_poll_interval_{2000};
+	int rest_success_streak_ = 0;
 	std::unique_ptr<EkinoxUdpSession> udp_session_;
 };
 
