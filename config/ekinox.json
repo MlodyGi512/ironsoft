@@ -9,7 +9,7 @@
   "ekinox": {
     "ip": "192.168.100.2",
     "udp_port": 5678,
-    "udp_local_port": 7004,
+    "udp_local_port": 1234,
     "rest_port": 80
   },
   "timeouts": {
